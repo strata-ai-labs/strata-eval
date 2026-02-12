@@ -11,7 +11,7 @@ from beir import util
 from beir.datasets.data_loader import GenericDataLoader
 from beir.retrieval.evaluation import EvaluateRetrieval
 
-from .config import DATASETS, K_VALUES, MODES
+from .config import DATASETS, K_VALUES, MODES, PYSERINI_BASELINES
 from .retriever import StrataSearch
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -42,8 +42,10 @@ def save_results(report: dict, output_dir: Path) -> Path:
 
 def print_summary(report: dict) -> None:
     """Print a human-readable summary of evaluation metrics."""
+    dataset = report["dataset"]
+
     print(f"\n{'='*60}")
-    print(f"  Dataset: {report['dataset']}  |  Mode: {report['mode']}")
+    print(f"  Dataset: {dataset}  |  Mode: {report['mode']}")
     print(f"  Corpus: {report['corpus_size']} docs  |  Queries: {report['num_queries']}")
     print(f"{'='*60}")
 
@@ -52,6 +54,25 @@ def print_summary(report: dict) -> None:
         values = metrics.get(metric_name, {})
         parts = [f"{k}: {v:.4f}" for k, v in sorted(values.items())]
         print(f"  {metric_name:>10}  {', '.join(parts)}")
+
+    # Compare against Pyserini BM25 baselines
+    baselines = PYSERINI_BASELINES.get(dataset)
+    if baselines:
+        ndcg10 = metrics.get("ndcg", {}).get("NDCG@10")
+        recall100 = metrics.get("recall", {}).get("Recall@100")
+        bm25_flat = baselines["bm25_flat"]
+        bm25_mf = baselines["bm25_mf"]
+
+        print(f"\n  {'--- Pyserini BM25 Baselines (Lucene) ---':^50}")
+        print(f"  {'':>18} {'BM25 flat':>12} {'BM25 mf':>12} {'Strata':>12} {'vs flat':>10}")
+        if ndcg10 is not None:
+            delta = ndcg10 - bm25_flat["NDCG@10"]
+            sign = "+" if delta >= 0 else ""
+            print(f"  {'NDCG@10':>18} {bm25_flat['NDCG@10']:>12.4f} {bm25_mf['NDCG@10']:>12.4f} {ndcg10:>12.4f} {sign}{delta:>9.4f}")
+        if recall100 is not None:
+            delta = recall100 - bm25_flat["Recall@100"]
+            sign = "+" if delta >= 0 else ""
+            print(f"  {'Recall@100':>18} {bm25_flat['Recall@100']:>12.4f} {bm25_mf['Recall@100']:>12.4f} {recall100:>12.4f} {sign}{delta:>9.4f}")
 
     print(f"{'='*60}\n")
 
@@ -131,6 +152,7 @@ def main() -> None:
             "recall": recall,
             "precision": precision,
         },
+        "pyserini_baselines": PYSERINI_BASELINES.get(args.dataset),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     save_results(report, Path(args.output_dir))
