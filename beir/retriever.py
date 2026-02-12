@@ -1,15 +1,22 @@
-"""StrataRetriever — indexes a BEIR corpus into Strata and runs queries."""
+"""StrataSearch — BEIR BaseSearch adapter for the Strata search engine."""
 
 from __future__ import annotations
 
 import os
+import tempfile
 
+from beir.retrieval.search import BaseSearch
 from stratadb import Strata
 from tqdm import tqdm
 
 
-class StrataRetriever:
-    """Thin wrapper that maps BEIR's corpus/query dicts to Strata operations."""
+class StrataSearch(BaseSearch):
+    """BEIR-compatible search adapter that indexes a corpus into Strata and
+    runs queries using its hybrid search pipeline.
+
+    Implements the ``BaseSearch.search()`` contract: given corpus + queries +
+    top_k, returns ``{query_id: {doc_id: score}}``.
+    """
 
     # Maps CLI mode names to db.search() kwargs.
     _SEARCH_KWARGS = {
@@ -18,7 +25,7 @@ class StrataRetriever:
         "hybrid-llm": {"mode": "hybrid", "expand": True, "rerank": True},
     }
 
-    def __init__(self, db_path: str, mode: str = "hybrid"):
+    def __init__(self, mode: str = "hybrid"):
         if mode == "hybrid-llm":
             endpoint = os.environ.get("STRATA_MODEL_ENDPOINT")
             model = os.environ.get("STRATA_MODEL_NAME")
@@ -27,48 +34,60 @@ class StrataRetriever:
                     "hybrid-llm mode requires STRATA_MODEL_ENDPOINT and "
                     "STRATA_MODEL_NAME environment variables"
                 )
-
-        self.db = Strata.open(db_path, auto_embed=True)
         self.mode = mode
+        self._db = None
+        self._tmpdir = None
 
-        if mode == "hybrid-llm":
-            api_key = os.environ.get("STRATA_MODEL_API_KEY")
-            self.db.configure_model(
-                endpoint=os.environ["STRATA_MODEL_ENDPOINT"],
-                model=os.environ["STRATA_MODEL_NAME"],
-                api_key=api_key,
-            )
+    def _open_db(self) -> Strata:
+        """Lazily open a Strata database in a temp directory."""
+        if self._db is None:
+            self._tmpdir = tempfile.TemporaryDirectory()
+            self._db = Strata.open(self._tmpdir.name, auto_embed=True)
+            if self.mode == "hybrid-llm":
+                self._db.configure_model(
+                    endpoint=os.environ["STRATA_MODEL_ENDPOINT"],
+                    model=os.environ["STRATA_MODEL_NAME"],
+                    api_key=os.environ.get("STRATA_MODEL_API_KEY"),
+                )
+        return self._db
 
     # ------------------------------------------------------------------
-    # Indexing
+    # BaseSearch interface
     # ------------------------------------------------------------------
 
-    def index(self, corpus: dict) -> None:
-        """Index a BEIR corpus into Strata's KV store.
+    def search(
+        self,
+        corpus: dict[str, dict[str, str]],
+        queries: dict[str, str],
+        top_k: int,
+        *args,
+        **kwargs,
+    ) -> dict[str, dict[str, float]]:
+        db = self._open_db()
 
-        Each document is stored as ``db.kv.put(doc_id, title + " " + text)``.
-        With ``auto_embed=True``, Strata automatically creates shadow vector
-        entries for hybrid search.
-        """
+        # Index corpus
         for doc_id, doc in tqdm(corpus.items(), desc="Indexing"):
             text = f"{doc.get('title', '')} {doc['text']}".strip()
-            self.db.kv.put(doc_id, text)
-        self.db.flush()
+            db.kv.put(doc_id, text)
+        db.flush()
 
-    # ------------------------------------------------------------------
-    # Retrieval
-    # ------------------------------------------------------------------
-
-    def retrieve(self, queries: dict, k: int = 100) -> dict:
-        """Run queries and return results in BEIR format.
-
-        Returns:
-            ``{query_id: {doc_id: score, ...}, ...}``
-        """
-        kwargs = self._SEARCH_KWARGS[self.mode]
-
+        # Run queries
+        search_kwargs = self._SEARCH_KWARGS[self.mode]
         results: dict[str, dict[str, float]] = {}
         for qid, query_text in tqdm(queries.items(), desc="Searching"):
-            hits = self.db.search(query_text, k=k, primitives=["kv"], **kwargs)
+            hits = db.search(query_text, k=top_k, primitives=["kv"], **search_kwargs)
             results[qid] = {h["entity"]: h["score"] for h in hits}
         return results
+
+    def encode(self, *args, **kwargs):
+        raise NotImplementedError("StrataSearch is a full search engine, not an encoder")
+
+    def search_from_files(self, *args, **kwargs):
+        raise NotImplementedError("StrataSearch is a full search engine, not an encoder")
+
+    def cleanup(self):
+        """Clean up the temporary database directory."""
+        self._db = None
+        if self._tmpdir is not None:
+            self._tmpdir.cleanup()
+            self._tmpdir = None

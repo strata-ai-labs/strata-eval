@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,7 +12,7 @@ from beir.datasets.data_loader import GenericDataLoader
 from beir.retrieval.evaluation import EvaluateRetrieval
 
 from .config import DATASETS, K_VALUES, MODES
-from .retriever import StrataRetriever
+from .retriever import StrataSearch
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -26,9 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def download_dataset(name: str, data_dir: Path) -> str:
     """Download a BEIR dataset and return the extracted path."""
     url = DATASETS[name]["url"]
-    out_dir = str(data_dir)
-    data_path = util.download_and_unzip(url, out_dir)
-    return data_path
+    return util.download_and_unzip(url, str(data_dir))
 
 
 def save_results(report: dict, output_dir: Path) -> Path:
@@ -110,18 +106,16 @@ def main() -> None:
     data_path = download_dataset(args.dataset, Path(args.data_dir))
     corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load(split="test")
 
-    # 2. Index corpus into Strata (fresh temp dir per run)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        retriever = StrataRetriever(tmpdir, mode=args.mode)
-        retriever.index(corpus)
+    # 2. Create Strata search model and BEIR retriever
+    model = StrataSearch(mode=args.mode)
+    retriever = EvaluateRetrieval(model, k_values=args.k)
 
-        # 3. Run retrieval
-        max_k = max(args.k)
-        results = retriever.retrieve(queries, k=max_k)
+    # 3. Retrieve (indexes corpus + runs queries via BaseSearch.search())
+    results = retriever.retrieve(corpus, queries)
 
-    # 4. Evaluate using pytrec_eval via BEIR
-    ndcg, map_score, recall, precision = EvaluateRetrieval.evaluate(
-        qrels, results, k_values=args.k,
+    # 4. Evaluate
+    ndcg, map_score, recall, precision = retriever.evaluate(
+        qrels, results, args.k,
     )
 
     # 5. Build + save report
@@ -141,6 +135,8 @@ def main() -> None:
     }
     save_results(report, Path(args.output_dir))
     print_summary(report)
+
+    model.cleanup()
 
 
 if __name__ == "__main__":
