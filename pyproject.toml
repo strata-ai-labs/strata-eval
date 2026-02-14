@@ -10,5 +10,8 @@ dependencies = [
     "pytrec_eval",
 ]
 
+[tool.setuptools.packages.find]
+include = ["strata_eval*"]
+
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]

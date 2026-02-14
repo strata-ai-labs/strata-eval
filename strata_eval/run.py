@@ -1,12 +1,14 @@
-"""CLI entry point: python -m beir.run --dataset nfcorpus --mode hybrid"""
+"""CLI entry point: python -m strata_eval --dataset nfcorpus --mode hybrid"""
 
 from __future__ import annotations
 
 import argparse
 import json
+import platform
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytrec_eval
 from beir import util
 from beir.datasets.data_loader import GenericDataLoader
 from beir.retrieval.evaluation import EvaluateRetrieval
@@ -50,10 +52,15 @@ def print_summary(report: dict) -> None:
     print(f"{'='*60}")
 
     metrics = report["metrics"]
-    for metric_name in ("ndcg", "map", "recall", "precision"):
+    for metric_name in ("ndcg", "map", "recall", "precision", "mrr"):
         values = metrics.get(metric_name, {})
         parts = [f"{k}: {v:.4f}" for k, v in sorted(values.items())]
         print(f"  {metric_name:>10}  {', '.join(parts)}")
+
+    timing = report.get("timing")
+    if timing:
+        print(f"\n  {'--- Timing ---':^50}")
+        print(f"  Index: {timing['index_time_s']:.1f}s  |  Search: {timing['search_time_s']:.1f}s  |  QPS: {timing['queries_per_second']:.1f}")
 
     # Compare against Pyserini BM25 baselines
     baselines = PYSERINI_BASELINES.get(dataset)
@@ -134,24 +141,67 @@ def main() -> None:
     # 3. Retrieve (indexes corpus + runs queries via BaseSearch.search())
     results = retriever.retrieve(corpus, queries)
 
-    # 4. Evaluate
+    # 4. Evaluate standard metrics
     ndcg, map_score, recall, precision = retriever.evaluate(
         qrels, results, args.k,
     )
 
-    # 5. Build + save report
+    # 4b. MRR
+    mrr = EvaluateRetrieval.evaluate_custom(qrels, results, args.k, metric="mrr")
+
+    # 4c. Per-query NDCG@10 for statistical significance tests
+    evaluator = pytrec_eval.RelevanceEvaluator(qrels, {"ndcg_cut.10"})
+    per_query_raw = evaluator.evaluate(results)
+    per_query_ndcg10 = {
+        qid: scores["ndcg_cut_10"]
+        for qid, scores in per_query_raw.items()
+    }
+
+    # 5. Timing (from instrumented retriever)
+    index_time = model.index_time
+    search_time = model.search_time
+    total_time = index_time + search_time
+    num_queries = len(queries)
+    qps = num_queries / search_time if search_time > 0 else 0
+    avg_latency_ms = (search_time / num_queries * 1000) if num_queries > 0 else 0
+
+    # 6. System metadata
+    try:
+        import stratadb
+        strata_version = getattr(stratadb, "__version__", "unknown")
+    except ImportError:
+        strata_version = "not installed"
+
+    system_info = {
+        "stratadb_version": strata_version,
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+        "cpu": platform.processor(),
+    }
+
+    # 7. Build + save report
     report = {
         "dataset": args.dataset,
         "mode": args.mode,
         "corpus_size": len(corpus),
-        "num_queries": len(queries),
+        "num_queries": num_queries,
         "k_values": args.k,
         "metrics": {
             "ndcg": ndcg,
             "map": map_score,
             "recall": recall,
             "precision": precision,
+            "mrr": mrr,
         },
+        "per_query_ndcg10": per_query_ndcg10,
+        "timing": {
+            "index_time_s": round(index_time, 2),
+            "search_time_s": round(search_time, 2),
+            "total_time_s": round(total_time, 2),
+            "queries_per_second": round(qps, 1),
+            "avg_latency_ms": round(avg_latency_ms, 1),
+        },
+        "system": system_info,
         "pyserini_baselines": PYSERINI_BASELINES.get(args.dataset),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
