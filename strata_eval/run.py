@@ -123,6 +123,12 @@ def parse_args() -> argparse.Namespace:
         default=str(ROOT / "datasets"),
         help="Directory for downloaded BEIR datasets",
     )
+    parser.add_argument(
+        "--db-dir",
+        type=str,
+        default=None,
+        help="Persistent database directory (skips re-indexing on subsequent runs)",
+    )
     return parser.parse_args()
 
 
@@ -135,7 +141,7 @@ def main() -> None:
     corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load(split="test")
 
     # 2. Create Strata search model and BEIR retriever
-    model = StrataSearch(mode=args.mode)
+    model = StrataSearch(mode=args.mode, db_path=args.db_dir)
     retriever = EvaluateRetrieval(model, k_values=args.k)
 
     # 3. Retrieve (indexes corpus + runs queries via BaseSearch.search())

@@ -26,7 +26,7 @@ class StrataSearch(BaseSearch):
         "hybrid-llm": {"mode": "hybrid", "expand": True, "rerank": True},
     }
 
-    def __init__(self, mode: str = "hybrid"):
+    def __init__(self, mode: str = "hybrid", db_path: str | None = None):
         if mode == "hybrid-llm":
             endpoint = os.environ.get("STRATA_MODEL_ENDPOINT")
             model = os.environ.get("STRATA_MODEL_NAME")
@@ -36,17 +36,23 @@ class StrataSearch(BaseSearch):
                     "STRATA_MODEL_NAME environment variables"
                 )
         self.mode = mode
+        self.db_path = db_path
         self._db = None
         self._tmpdir = None
         self.index_time: float = 0.0
         self.search_time: float = 0.0
 
     def _open_db(self) -> Strata:
-        """Lazily open a Strata database in a temp directory."""
+        """Lazily open a Strata database."""
         if self._db is None:
-            self._tmpdir = tempfile.TemporaryDirectory()
+            if self.db_path:
+                os.makedirs(self.db_path, exist_ok=True)
+                db_dir = self.db_path
+            else:
+                self._tmpdir = tempfile.TemporaryDirectory()
+                db_dir = self._tmpdir.name
             use_embed = self.mode != "keyword"
-            self._db = Strata.open(self._tmpdir.name, auto_embed=use_embed)
+            self._db = Strata.open(db_dir, auto_embed=use_embed)
             if self.mode == "hybrid-llm":
                 self._db.configure_model(
                     endpoint=os.environ["STRATA_MODEL_ENDPOINT"],
@@ -69,12 +75,16 @@ class StrataSearch(BaseSearch):
     ) -> dict[str, dict[str, float]]:
         db = self._open_db()
 
-        # Index corpus
+        # Index corpus (skip if DB already has data)
         t0 = time.perf_counter()
-        for doc_id, doc in tqdm(corpus.items(), desc="Indexing"):
-            text = f"{doc.get('title', '')} {doc['text']}".strip()
-            db.kv.put(doc_id, text)
-        db.flush()
+        existing_keys = db.kv.list()
+        if len(existing_keys) >= len(corpus):
+            print(f"Database already contains {len(existing_keys)} docs, skipping indexing")
+        else:
+            for doc_id, doc in tqdm(corpus.items(), desc="Indexing"):
+                text = f"{doc.get('title', '')} {doc['text']}".strip()
+                db.kv.put(doc_id, text)
+            db.flush()
         self.index_time = time.perf_counter() - t0
 
         # Run queries — parallel for keyword mode, sequential for hybrid/embed modes.
@@ -120,7 +130,7 @@ class StrataSearch(BaseSearch):
         raise NotImplementedError("StrataSearch is a full search engine, not an encoder")
 
     def cleanup(self):
-        """Clean up the temporary database directory."""
+        """Clean up the database. Only removes temp directories, not persistent ones."""
         self._db = None
         if self._tmpdir is not None:
             self._tmpdir.cleanup()
