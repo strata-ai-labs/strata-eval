@@ -15,8 +15,16 @@ from beir.retrieval.evaluation import EvaluateRetrieval
 
 from .config import DATASETS, K_VALUES, MODES, PYSERINI_BASELINES
 from .retriever import StrataSearch
+from .redis_search import RedisSearch
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# CQADupStack has 12 subforums, each a self-contained BEIR dataset.
+# Standard evaluation runs each independently and macro-averages metrics.
+CQADUPSTACK_SUBFORUMS = [
+    "android", "english", "gaming", "gis", "mathematica", "physics",
+    "programmers", "stats", "tex", "unix", "webmasters", "wordpress",
+]
 
 
 # ------------------------------------------------------------------
@@ -85,6 +93,130 @@ def print_summary(report: dict) -> None:
 
 
 # ------------------------------------------------------------------
+# CQADupStack (multi-subforum dataset)
+# ------------------------------------------------------------------
+
+def run_cqadupstack(args) -> None:
+    """Run evaluation on all 12 CQADupStack subforums and macro-average."""
+    data_path = download_dataset("cqadupstack", Path(args.data_dir))
+    cqa_root = Path(data_path)
+
+    all_per_query_ndcg10: dict[str, float] = {}
+    subforum_metrics: dict[str, dict] = {}
+    total_corpus = 0
+    total_queries = 0
+    total_index_time = 0.0
+    total_search_time = 0.0
+
+    for subforum in CQADUPSTACK_SUBFORUMS:
+        subforum_path = cqa_root / subforum
+        print(f"\n{'─'*60}")
+        print(f"  CQADupStack subforum: {subforum}")
+        print(f"{'─'*60}")
+
+        corpus, queries, qrels = GenericDataLoader(
+            data_folder=str(subforum_path),
+        ).load(split="test")
+
+        if args.retriever == "redis":
+            model = RedisSearch(mode=args.mode, redis_url=args.redis_url)
+        else:
+            model = StrataSearch(mode=args.mode)
+        retriever = EvaluateRetrieval(model, k_values=args.k)
+
+        results = retriever.retrieve(corpus, queries)
+
+        ndcg, map_score, recall, precision = retriever.evaluate(
+            qrels, results, args.k,
+        )
+        mrr = EvaluateRetrieval.evaluate_custom(qrels, results, args.k, metric="mrr")
+
+        evaluator = pytrec_eval.RelevanceEvaluator(qrels, {"ndcg_cut.10"})
+        per_query_raw = evaluator.evaluate(results)
+        for qid, scores in per_query_raw.items():
+            all_per_query_ndcg10[f"{subforum}/{qid}"] = scores["ndcg_cut_10"]
+
+        subforum_metrics[subforum] = {
+            "corpus_size": len(corpus),
+            "num_queries": len(queries),
+            "ndcg": ndcg,
+            "map": map_score,
+            "recall": recall,
+            "precision": precision,
+            "mrr": mrr,
+        }
+
+        total_corpus += len(corpus)
+        total_queries += len(queries)
+        total_index_time += model.index_time
+        total_search_time += model.search_time
+
+        model.cleanup()
+
+    # Macro-average across subforums
+    metric_names = ("ndcg", "map", "recall", "precision", "mrr")
+    averaged: dict[str, dict[str, float]] = {}
+    n = len(CQADUPSTACK_SUBFORUMS)
+    for metric_name in metric_names:
+        # Collect all k-level keys from first subforum
+        k_keys = list(subforum_metrics[CQADUPSTACK_SUBFORUMS[0]][metric_name].keys())
+        averaged[metric_name] = {}
+        for k_key in k_keys:
+            total = sum(
+                subforum_metrics[sf][metric_name][k_key]
+                for sf in CQADUPSTACK_SUBFORUMS
+            )
+            averaged[metric_name][k_key] = round(total / n, 5)
+
+    total_time = total_index_time + total_search_time
+    qps = total_queries / total_search_time if total_search_time > 0 else 0
+    avg_latency_ms = (total_search_time / total_queries * 1000) if total_queries > 0 else 0
+
+    try:
+        import stratadb
+        strata_version = getattr(stratadb, "__version__", "unknown")
+    except ImportError:
+        strata_version = "not installed"
+
+    system_info = {
+        "stratadb_version": strata_version,
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+        "cpu": platform.processor(),
+    }
+
+    report = {
+        "dataset": "cqadupstack",
+        "mode": args.mode,
+        "corpus_size": total_corpus,
+        "num_queries": total_queries,
+        "k_values": args.k,
+        "metrics": averaged,
+        "per_subforum": {
+            sf: {
+                "corpus_size": m["corpus_size"],
+                "num_queries": m["num_queries"],
+                "metrics": {mn: m[mn] for mn in metric_names},
+            }
+            for sf, m in subforum_metrics.items()
+        },
+        "per_query_ndcg10": all_per_query_ndcg10,
+        "timing": {
+            "index_time_s": round(total_index_time, 2),
+            "search_time_s": round(total_search_time, 2),
+            "total_time_s": round(total_time, 2),
+            "queries_per_second": round(qps, 1),
+            "avg_latency_ms": round(avg_latency_ms, 1),
+        },
+        "system": system_info,
+        "pyserini_baselines": PYSERINI_BASELINES.get("cqadupstack"),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    save_results(report, Path(args.output_dir))
+    print_summary(report)
+
+
+# ------------------------------------------------------------------
 # Main
 # ------------------------------------------------------------------
 
@@ -129,19 +261,39 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Persistent database directory (skips re-indexing on subsequent runs)",
     )
+    parser.add_argument(
+        "--retriever",
+        type=str,
+        default="strata",
+        choices=["strata", "redis"],
+        help="Search engine to benchmark (default: strata)",
+    )
+    parser.add_argument(
+        "--redis-url",
+        type=str,
+        default="redis://localhost:6380",
+        help="Redis URL for redis retriever (default: redis://localhost:6380)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
 
+    if args.dataset == "cqadupstack":
+        run_cqadupstack(args)
+        return
+
     # 1. Download + load dataset
     print(f"Loading BEIR dataset: {args.dataset}")
     data_path = download_dataset(args.dataset, Path(args.data_dir))
     corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load(split="test")
 
-    # 2. Create Strata search model and BEIR retriever
-    model = StrataSearch(mode=args.mode, db_path=args.db_dir)
+    # 2. Create search model and BEIR retriever
+    if args.retriever == "redis":
+        model = RedisSearch(mode=args.mode, redis_url=args.redis_url)
+    else:
+        model = StrataSearch(mode=args.mode, db_path=args.db_dir)
     retriever = EvaluateRetrieval(model, k_values=args.k)
 
     # 3. Retrieve (indexes corpus + runs queries via BaseSearch.search())
