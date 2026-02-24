@@ -1,5 +1,17 @@
 datasets/
 results/
 __pycache__/
+*.pyc
+*.pyo
 *.egg-info/
+*.egg
+.eggs/
+dist/
+build/
 .venv/
+.env
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.hdf5
+.DS_Store

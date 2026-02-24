@@ -1,48 +1,68 @@
 # strata-eval
 
-IR quality benchmarks for [Strata](https://github.com/strata-ai-labs/strata) hybrid search using [BEIR](https://github.com/beir-cellar/beir).
+Comprehensive benchmarks for [StrataDB](https://github.com/strata-ai-labs/strata). Covers information retrieval, key-value workloads, vector search, graph algorithms, and RAG evaluation.
 
-## What this measures
+## Benchmark Suites
 
-Strata provides a full hybrid search pipeline: BM25 keyword search + MiniLM vector search + RRF fusion. This repo evaluates retrieval quality on standard BEIR benchmarks so we can track improvements over time.
+| Suite | What it tests | Metrics | Status |
+|-------|---------------|---------|--------|
+| **BEIR** | IR retrieval quality (15 datasets) | nDCG@10, Recall@100, MAP, MRR | Implemented |
+| **YCSB** | Key-value workloads A-F | Throughput (ops/s), p50/p95/p99 latency | Implemented |
+| **ANN** | Vector search quality + speed | Recall@k, QPS, build time | Implemented |
+| **Graphalytics** | Graph algorithms (LDBC) | EVPS, correctness validation | Implemented |
+| **LoCoMo** | Long-context conversational memory | F1, ROUGE-L | Scaffold (needs LLM) |
+| **LongMemEval** | Long-term memory (5 abilities) | Accuracy, Recall@k | Stub (needs LLM) |
+| **RAGAS** | RAG pipeline quality | Faithfulness, relevance, precision, recall | Scaffold (needs LLM) |
+| **GraphRAG-Bench** | Graph-based RAG | Accuracy, reasoning quality | Stub (needs LLM) |
 
-| Mode | What it tests | LLM required? |
-|------|---------------|---------------|
-| `keyword` | BM25 only | No |
-| `hybrid` | BM25 + MiniLM vectors + RRF fusion | No |
-| `hybrid-llm` | Full pipeline with LLM query expansion + reranking | Yes |
-
-**Primary metrics**: `keyword` and `hybrid` — pure retrieval quality, no LLM needed.
-**Optional**: `hybrid-llm` — shows ceiling with LLM-assisted search. Requires `STRATA_MODEL_ENDPOINT` and `STRATA_MODEL_NAME` env vars.
+**Implemented** = fully functional. **Scaffold** = retrieval pipeline works, LLM evaluation marked TODO. **Stub** = structure defined, full implementation needed.
 
 ## Setup
 
 ```bash
+pip install stratadb
 pip install -e .
+
+# For BEIR benchmarks (optional deps)
+pip install -e ".[beir]"
+
+# For ANN benchmarks
+pip install -e ".[ann]"
+
+# For all dependencies
+pip install -e ".[all]"
 ```
 
-## Usage
+## Quick Start
 
 ```bash
-# Run on a single dataset
-python -m beir --dataset nfcorpus --mode hybrid
+# BEIR — information retrieval
+python -m strata_eval beir --dataset nfcorpus --mode hybrid
 
-# Keyword-only baseline
-python -m beir --dataset nfcorpus --mode keyword
+# YCSB — key-value workloads
+python -m strata_eval ycsb --workload a --records 100000 --ops 100000
 
-# Try a different dataset
-python -m beir --dataset scifact --mode hybrid
+# ANN — vector search
+python -m strata_eval download --bench ann --dataset glove-25-angular
+python -m strata_eval ann --dataset glove-25-angular
 
-# Custom cutoff depths
-python -m beir --dataset nfcorpus --mode hybrid --k 10 100 1000
+# LDBC Graphalytics — graph algorithms
+python -m strata_eval graphalytics --algorithm bfs --dataset example-directed --runs 10
 
-# With LLM-assisted search (requires model endpoint)
-export STRATA_MODEL_ENDPOINT="http://localhost:11434/v1"
-export STRATA_MODEL_NAME="qwen3:1.7b"
-python -m beir --dataset nfcorpus --mode hybrid-llm
+# Generate report from all results
+python -m strata_eval report
+python -m strata_eval report --format latex
 ```
 
-## Available datasets
+## BEIR Benchmarks
+
+15 datasets from 3.6K to 8.8M documents. Evaluates BM25 keyword search and hybrid (BM25 + MiniLM vectors + RRF fusion).
+
+```bash
+python -m strata_eval beir --dataset nfcorpus --mode hybrid
+python -m strata_eval beir --dataset scifact --mode keyword
+python -m strata_eval beir --dataset nfcorpus --mode hybrid --k 10 100 1000
+```
 
 | Dataset | Docs | Queries | Domain |
 |---------|------|---------|--------|
@@ -51,28 +71,72 @@ python -m beir --dataset nfcorpus --mode hybrid-llm
 | `arguana` | 8.7K | 1,406 | Argument retrieval |
 | `scidocs` | 25K | 1,000 | Scientific papers |
 | `trec-covid` | 171K | 50 | COVID-19 literature |
+| + 10 more | up to 8.8M | | Various |
 
-Start with `nfcorpus` or `scifact` — they're small enough for fast iteration.
+## YCSB Benchmarks
 
-## Interpreting results
+Standard Yahoo Cloud Serving Benchmark workloads measuring throughput and latency. Single-threaded sequential execution.
 
-- **nDCG@10** is the primary metric (standard in IR evaluation)
-- Higher is better; 1.0 is perfect ranking
-- Compare `keyword` vs `hybrid` to measure the value of vector search + fusion
-- Results are saved as JSON in the `results/` directory
-
-## Output
-
-Each run prints a summary and writes a JSON file to `results/`:
-
+```bash
+python -m strata_eval ycsb --workload a b c d e f
+python -m strata_eval ycsb --workload a --records 1000000 --distribution zipfian
 ```
-============================================================
-  Dataset: nfcorpus  |  Mode: hybrid
-  Corpus: 3633 docs  |  Queries: 323
-============================================================
-        ndcg  NDCG@10: 0.3241, NDCG@100: 0.2876
-         map  MAP@10: 0.0512, MAP@100: 0.0698
-      recall  Recall@10: 0.0821, Recall@100: 0.2143
-   precision  P@10: 0.0312, P@100: 0.0089
-============================================================
+
+| Workload | Description | Read/Write |
+|----------|-------------|------------|
+| A | Update heavy | 50/50 |
+| B | Read mostly | 95/5 |
+| C | Read only | 100/0 |
+| D | Read latest | 95/5 insert |
+| E | Short scans | 95 scan/5 insert |
+| F | Read-modify-write | 50/50 |
+
+## ANN Benchmarks
+
+Vector search recall vs. QPS using standard ann-benchmarks.com datasets. Reports a single operating point at Strata's default search parameters (single-threaded sequential queries).
+
+```bash
+python -m strata_eval download --bench ann --dataset sift-128-euclidean
+python -m strata_eval ann --dataset sift-128-euclidean
 ```
+
+| Dataset | Dimensions | Vectors | Metric |
+|---------|-----------|---------|--------|
+| `sift-128-euclidean` | 128 | 1M | Euclidean |
+| `glove-100-angular` | 100 | 1.18M | Cosine |
+| `glove-25-angular` | 25 | 1.18M | Cosine |
+
+## LDBC Graphalytics
+
+Graph algorithm benchmarks with LDBC reference validation. Stores graphs in Strata KV as adjacency lists, reads back, and runs algorithms in Python.
+
+```bash
+python -m strata_eval graphalytics --algorithm bfs wcc pagerank --dataset example-directed
+```
+
+Algorithms: BFS, WCC, PageRank, CDLP, LCC, SSSP
+
+## Batch Runner
+
+Run all Phase 1 benchmarks and generate reports:
+
+```bash
+python scripts/run_all.py                                    # all Phase 1 benchmarks
+python scripts/run_all.py --bench beir ycsb --latex          # specific suites + LaTeX
+python scripts/run_all.py --bench ycsb --workload a b c      # YCSB subset
+python scripts/run_all.py --clean                            # fresh start
+```
+
+## Results
+
+All benchmarks write JSON results to `results/`. Generate reports:
+
+```bash
+python -m strata_eval report                    # Markdown summary
+python -m strata_eval report --format latex     # LaTeX tables for papers
+python -m strata_eval report --bench beir ann   # specific suites
+```
+
+## Phase 2 Benchmarks
+
+LoCoMo and RAGAS have retrieval pipelines implemented; LLM evaluation is marked with TODOs. LongMemEval and GraphRAG-Bench are stubs with pipeline structure defined. All require `STRATA_MODEL_ENDPOINT` and `STRATA_MODEL_NAME` environment variables.
