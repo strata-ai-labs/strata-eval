@@ -53,6 +53,8 @@ class StrataSearch(BaseSearch):
                 db_dir = self._tmpdir.name
             use_embed = self.mode != "keyword"
             self._db = Strata.open(db_dir, auto_embed=use_embed)
+            if use_embed:
+                self._db.models_pull("miniLM")
             if self.mode == "hybrid-llm":
                 self._db.configure_model(
                     endpoint=os.environ["STRATA_MODEL_ENDPOINT"],
