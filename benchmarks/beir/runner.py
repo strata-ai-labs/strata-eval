@@ -51,6 +51,10 @@ class BeirBenchmark(BaseBenchmark):
             "--db-dir", type=str, default=None,
             help="Persistent database directory (skips re-indexing)",
         )
+        parser.add_argument(
+            "--model", type=str, default="miniLM",
+            help="Embedding model for hybrid/hybrid-llm modes (default: miniLM)",
+        )
 
     def download(self, args: argparse.Namespace) -> None:
         raw = getattr(args, "dataset", None) or []
@@ -92,7 +96,8 @@ class BeirBenchmark(BaseBenchmark):
         data_path = _download_dataset(args.dataset, Path(args.data_dir))
         corpus, queries, qrels = GenericDataLoader(data_folder=data_path).load(split="test")
 
-        model = StrataSearch(mode=args.mode, db_path=args.db_dir)
+        embed_model = getattr(args, "model", "miniLM")
+        model = StrataSearch(mode=args.mode, db_path=args.db_dir, embed_model=embed_model)
         retriever = EvaluateRetrieval(model, k_values=args.k)
         results = retriever.retrieve(corpus, queries)
 
@@ -138,12 +143,14 @@ class BeirBenchmark(BaseBenchmark):
                 },
             }
 
+        mode_label = args.mode if args.mode == "keyword" else f"{args.mode}/{embed_model}"
         result = BenchmarkResult(
-            benchmark=f"beir/{args.dataset}/{args.mode}",
+            benchmark=f"beir/{args.dataset}/{mode_label}",
             category="beir",
             parameters={
                 "dataset": args.dataset,
                 "mode": args.mode,
+                "embed_model": embed_model if args.mode != "keyword" else None,
                 "corpus_size": len(corpus),
                 "num_queries": num_queries,
                 "k_values": args.k,
@@ -183,7 +190,8 @@ class BeirBenchmark(BaseBenchmark):
                 data_folder=str(subforum_path),
             ).load(split="test")
 
-            model = StrataSearch(mode=args.mode)
+            embed_model = getattr(args, "model", "miniLM")
+            model = StrataSearch(mode=args.mode, embed_model=embed_model)
             retriever = EvaluateRetrieval(model, k_values=args.k)
             results = retriever.retrieve(corpus, queries)
 

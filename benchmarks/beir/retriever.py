@@ -26,7 +26,8 @@ class StrataSearch(BaseSearch):
         "hybrid-llm": {"mode": "hybrid", "expand": True, "rerank": True},
     }
 
-    def __init__(self, mode: str = "hybrid", db_path: str | None = None):
+    def __init__(self, mode: str = "hybrid", db_path: str | None = None,
+                 embed_model: str = "miniLM"):
         if mode == "hybrid-llm":
             endpoint = os.environ.get("STRATA_MODEL_ENDPOINT")
             model = os.environ.get("STRATA_MODEL_NAME")
@@ -37,6 +38,7 @@ class StrataSearch(BaseSearch):
                 )
         self.mode = mode
         self.db_path = db_path
+        self.embed_model = embed_model
         self._db = None
         self._tmpdir = None
         self.index_time: float = 0.0
@@ -52,9 +54,10 @@ class StrataSearch(BaseSearch):
                 self._tmpdir = tempfile.TemporaryDirectory()
                 db_dir = self._tmpdir.name
             use_embed = self.mode != "keyword"
-            self._db = Strata.open(db_dir, auto_embed=use_embed)
+            embed_model = self.embed_model if use_embed else None
+            self._db = Strata.open(db_dir, auto_embed=use_embed, embed_model=embed_model)
             if use_embed:
-                self._db.models_pull("miniLM")
+                self._db.models_pull(embed_model)
             if self.mode == "hybrid-llm":
                 self._db.configure_model(
                     endpoint=os.environ["STRATA_MODEL_ENDPOINT"],
