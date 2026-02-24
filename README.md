@@ -33,8 +33,8 @@ pip install h5py
 ## Quick Start
 
 ```bash
-# BEIR — information retrieval
-python run.py beir --dataset nfcorpus --mode hybrid
+# BEIR — single dataset, keyword + hybrid (default)
+python run.py beir --dataset nfcorpus
 
 # YCSB — key-value workloads
 python run.py ycsb --workload a --records 100000 --ops 100000
@@ -53,12 +53,13 @@ python run.py report --format latex
 
 ## BEIR Benchmarks
 
-15 datasets from 3.6K to 8.8M documents. Evaluates BM25 keyword search and hybrid (BM25 + MiniLM vectors + RRF fusion).
+15 datasets from 3.6K to 8.8M documents. Evaluates BM25 keyword search and hybrid (BM25 + MiniLM vectors + RRF fusion). Each run automatically compares against Pyserini BM25 baselines (Lucene).
 
 ```bash
-python run.py beir --dataset nfcorpus --mode hybrid
-python run.py beir --dataset scifact --mode keyword
-python run.py beir --dataset nfcorpus --mode hybrid --k 10 100 1000
+python run.py beir --dataset nfcorpus                          # keyword + hybrid (default)
+python run.py beir --dataset nfcorpus --mode keyword           # keyword only
+python run.py beir --dataset nfcorpus scifact --mode keyword hybrid  # multiple datasets × modes
+python run.py beir --dataset nfcorpus --k 10 100 1000          # custom cutoff depths
 ```
 
 | Dataset | Docs | Queries | Domain |

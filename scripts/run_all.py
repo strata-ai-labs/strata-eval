@@ -45,17 +45,14 @@ def run_command(cmd: list[str], label: str) -> bool:
 
 
 def run_beir(modes: list[str], datasets: list[str]) -> list[str]:
-    failures = []
-    for dataset in datasets:
-        for mode in modes:
-            label = f"BEIR: {dataset} / {mode}"
-            if not run_command(
-                [sys.executable, str(ROOT / "run.py"), "beir",
-                 "--dataset", dataset, "--mode", mode],
-                label,
-            ):
-                failures.append(label)
-    return failures
+    label = f"BEIR: {', '.join(datasets)} × {', '.join(modes)}"
+    if not run_command(
+        [sys.executable, str(ROOT / "run.py"), "beir",
+         "--dataset", *datasets, "--mode", *modes],
+        label,
+    ):
+        return [label]
+    return []
 
 
 def run_ycsb(workloads: list[str], records: int, ops: int) -> list[str]:

@@ -30,13 +30,14 @@ class BeirBenchmark(BaseBenchmark):
 
     def register_args(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
-            "--dataset", required=True,
+            "--dataset", nargs="+", required=True,
             choices=list(DATASETS.keys()),
-            help="BEIR dataset to evaluate on",
+            help="BEIR dataset(s) to evaluate on",
         )
         parser.add_argument(
-            "--mode", default="hybrid", choices=MODES,
-            help="Search mode (default: hybrid)",
+            "--mode", nargs="+", default=["keyword", "hybrid"],
+            choices=MODES,
+            help="Search mode(s) (default: keyword hybrid)",
         )
         parser.add_argument(
             "--k", type=int, nargs="+", default=K_VALUES,
@@ -52,7 +53,8 @@ class BeirBenchmark(BaseBenchmark):
         )
 
     def download(self, args: argparse.Namespace) -> None:
-        datasets = getattr(args, "dataset_names", None) or [args.dataset]
+        raw = getattr(args, "dataset", None) or []
+        datasets = raw if isinstance(raw, list) else [raw]
         data_dir = Path(getattr(args, "data_dir", str(ROOT / "datasets")))
         for name in datasets:
             if name not in DATASETS:
@@ -63,9 +65,23 @@ class BeirBenchmark(BaseBenchmark):
             print(f"  Done: {name}")
 
     def run(self, args: argparse.Namespace) -> list[BenchmarkResult]:
-        if args.dataset == "cqadupstack":
-            return self._run_cqadupstack(args)
-        return self._run_single(args)
+        all_results: list[BenchmarkResult] = []
+        datasets = args.dataset if isinstance(args.dataset, list) else [args.dataset]
+        modes = args.mode if isinstance(args.mode, list) else [args.mode]
+
+        for dataset in datasets:
+            for mode in modes:
+                # Build a per-run args copy
+                run_args = argparse.Namespace(**vars(args))
+                run_args.dataset = dataset
+                run_args.mode = mode
+
+                if dataset == "cqadupstack":
+                    all_results.extend(self._run_cqadupstack(run_args))
+                else:
+                    all_results.extend(self._run_single(run_args))
+
+        return all_results
 
     # ------------------------------------------------------------------
     # Single dataset
