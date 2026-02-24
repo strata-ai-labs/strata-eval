@@ -17,8 +17,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from ...schema import BenchmarkResult
-from ..base import BaseBenchmark
+from lib.schema import BenchmarkResult
+from benchmarks.base import BaseBenchmark
 from .config import (
     ALGORITHMS,
     DEFAULT_CDLP_ITERATIONS,
@@ -31,7 +31,7 @@ from .ldbc import load_dataset, load_reference
 from . import algorithms as algo
 from .algorithms import UNREACHABLE_INT, UNREACHABLE_FLOAT
 
-ROOT = Path(__file__).resolve().parent.parent.parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 # ---------------------------------------------------------------------------

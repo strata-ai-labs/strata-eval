@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from abc import ABC, abstractmethod
 
-from ..schema import BenchmarkResult
+from lib.schema import BenchmarkResult
 
 
 class BaseBenchmark(ABC):

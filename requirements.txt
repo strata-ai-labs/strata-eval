@@ -1,0 +1,16 @@
+stratadb>=0.12
+numpy>=1.24
+tqdm>=4.60
+
+# BEIR benchmarks (optional)
+# beir
+# sentence-transformers
+# pytrec_eval
+
+# ANN benchmarks (optional)
+# h5py>=3.0
+
+# LLM benchmarks (optional)
+# ragas
+# rouge-score
+# openai

@@ -15,11 +15,11 @@ import tempfile
 import time
 from pathlib import Path
 
-from ...schema import BenchmarkResult
-from ..base import BaseBenchmark
+from lib.schema import BenchmarkResult
+from benchmarks.base import BaseBenchmark
 from .config import LOCOMO_DATASET, LLM_ENV_VARS
 
-ROOT = Path(__file__).resolve().parent.parent.parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 class LocomoBenchmark(BaseBenchmark):
@@ -40,7 +40,7 @@ class LocomoBenchmark(BaseBenchmark):
         )
 
     def download(self, args: argparse.Namespace) -> None:
-        from ...download import download_file
+        from lib.download import download_file
         data_dir = Path(getattr(args, "data_dir", str(ROOT / "datasets" / "locomo")))
         dest = data_dir / "locomo.json"
         download_file(LOCOMO_DATASET["url"], dest, desc="LoCoMo dataset")
@@ -71,7 +71,7 @@ class LocomoBenchmark(BaseBenchmark):
         if not dataset_path.exists():
             raise FileNotFoundError(
                 f"LoCoMo dataset not found at {dataset_path}. "
-                f"Run: python -m strata_eval download --bench locomo"
+                f"Run: python run.py download --bench locomo"
             )
 
         with open(dataset_path) as f:

@@ -21,37 +21,34 @@ Comprehensive benchmarks for [StrataDB](https://github.com/strata-ai-labs/strata
 
 ```bash
 pip install stratadb
-pip install -e .
+pip install -r requirements.txt
 
-# For BEIR benchmarks (optional deps)
-pip install -e ".[beir]"
+# BEIR benchmarks (optional)
+pip install beir sentence-transformers pytrec_eval
 
-# For ANN benchmarks
-pip install -e ".[ann]"
-
-# For all dependencies
-pip install -e ".[all]"
+# ANN benchmarks (optional)
+pip install h5py
 ```
 
 ## Quick Start
 
 ```bash
 # BEIR — information retrieval
-python -m strata_eval beir --dataset nfcorpus --mode hybrid
+python run.py beir --dataset nfcorpus --mode hybrid
 
 # YCSB — key-value workloads
-python -m strata_eval ycsb --workload a --records 100000 --ops 100000
+python run.py ycsb --workload a --records 100000 --ops 100000
 
 # ANN — vector search
-python -m strata_eval download --bench ann --dataset glove-25-angular
-python -m strata_eval ann --dataset glove-25-angular
+python run.py download --bench ann --dataset glove-25-angular
+python run.py ann --dataset glove-25-angular
 
 # LDBC Graphalytics — graph algorithms
-python -m strata_eval graphalytics --algorithm bfs --dataset example-directed --runs 10
+python run.py graphalytics --algorithm bfs --dataset example-directed --runs 10
 
 # Generate report from all results
-python -m strata_eval report
-python -m strata_eval report --format latex
+python run.py report
+python run.py report --format latex
 ```
 
 ## BEIR Benchmarks
@@ -59,9 +56,9 @@ python -m strata_eval report --format latex
 15 datasets from 3.6K to 8.8M documents. Evaluates BM25 keyword search and hybrid (BM25 + MiniLM vectors + RRF fusion).
 
 ```bash
-python -m strata_eval beir --dataset nfcorpus --mode hybrid
-python -m strata_eval beir --dataset scifact --mode keyword
-python -m strata_eval beir --dataset nfcorpus --mode hybrid --k 10 100 1000
+python run.py beir --dataset nfcorpus --mode hybrid
+python run.py beir --dataset scifact --mode keyword
+python run.py beir --dataset nfcorpus --mode hybrid --k 10 100 1000
 ```
 
 | Dataset | Docs | Queries | Domain |
@@ -78,8 +75,8 @@ python -m strata_eval beir --dataset nfcorpus --mode hybrid --k 10 100 1000
 Standard Yahoo Cloud Serving Benchmark workloads measuring throughput and latency. Single-threaded sequential execution.
 
 ```bash
-python -m strata_eval ycsb --workload a b c d e f
-python -m strata_eval ycsb --workload a --records 1000000 --distribution zipfian
+python run.py ycsb --workload a b c d e f
+python run.py ycsb --workload a --records 1000000 --distribution zipfian
 ```
 
 | Workload | Description | Read/Write |
@@ -96,8 +93,8 @@ python -m strata_eval ycsb --workload a --records 1000000 --distribution zipfian
 Vector search recall vs. QPS using standard ann-benchmarks.com datasets. Reports a single operating point at Strata's default search parameters (single-threaded sequential queries).
 
 ```bash
-python -m strata_eval download --bench ann --dataset sift-128-euclidean
-python -m strata_eval ann --dataset sift-128-euclidean
+python run.py download --bench ann --dataset sift-128-euclidean
+python run.py ann --dataset sift-128-euclidean
 ```
 
 | Dataset | Dimensions | Vectors | Metric |
@@ -111,7 +108,7 @@ python -m strata_eval ann --dataset sift-128-euclidean
 Graph algorithm benchmarks with LDBC reference validation. Stores graphs in Strata KV as adjacency lists, reads back, and runs algorithms in Python.
 
 ```bash
-python -m strata_eval graphalytics --algorithm bfs wcc pagerank --dataset example-directed
+python run.py graphalytics --algorithm bfs wcc pagerank --dataset example-directed
 ```
 
 Algorithms: BFS, WCC, PageRank, CDLP, LCC, SSSP
@@ -132,9 +129,9 @@ python scripts/run_all.py --clean                            # fresh start
 All benchmarks write JSON results to `results/`. Generate reports:
 
 ```bash
-python -m strata_eval report                    # Markdown summary
-python -m strata_eval report --format latex     # LaTeX tables for papers
-python -m strata_eval report --bench beir ann   # specific suites
+python run.py report                    # Markdown summary
+python run.py report --format latex     # LaTeX tables for papers
+python run.py report --bench beir ann   # specific suites
 ```
 
 ## Phase 2 Benchmarks

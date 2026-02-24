@@ -10,12 +10,12 @@ from beir import util
 from beir.datasets.data_loader import GenericDataLoader
 from beir.retrieval.evaluation import EvaluateRetrieval
 
-from ...schema import BenchmarkResult
-from ..base import BaseBenchmark
+from lib.schema import BenchmarkResult
+from benchmarks.base import BaseBenchmark
 from .config import DATASETS, K_VALUES, MODES, PYSERINI_BASELINES
 from .retriever import StrataSearch
 
-ROOT = Path(__file__).resolve().parent.parent.parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 # CQADupStack has 12 subforums, each a self-contained BEIR dataset.
 # Standard evaluation runs each independently and macro-averages metrics.

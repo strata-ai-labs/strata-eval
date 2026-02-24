@@ -1,4 +1,14 @@
-"""Unified CLI with subcommands for all benchmark suites."""
+#!/usr/bin/env python3
+"""Unified CLI with subcommands for all benchmark suites.
+
+Usage:
+    python run.py beir --dataset nfcorpus --mode hybrid
+    python run.py ycsb --workload a --records 100000
+    python run.py ann --dataset sift-128-euclidean
+    python run.py graphalytics --algorithm bfs --dataset example-directed
+    python run.py download --bench ann --dataset sift-128-euclidean
+    python run.py report --format latex
+"""
 
 from __future__ import annotations
 
@@ -6,13 +16,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from .benchmarks import get_benchmarks
-from .benchmarks.base import BaseBenchmark
-from . import download as dl_mod
-from . import report as report_mod
-from .recorder import ResultRecorder
+from benchmarks import get_benchmarks
+from benchmarks.base import BaseBenchmark
+from lib import download as dl_mod
+from lib import report as report_mod
+from lib.recorder import ResultRecorder
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -91,3 +101,7 @@ def main(argv: list[str] | None = None) -> None:
         for r in results:
             recorder.record(r)
         recorder.save(parsed.output_dir)
+
+
+if __name__ == "__main__":
+    main()

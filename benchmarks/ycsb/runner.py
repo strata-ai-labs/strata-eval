@@ -13,8 +13,8 @@ import random
 import tempfile
 import time
 
-from ...schema import BenchmarkResult
-from ..base import BaseBenchmark
+from lib.schema import BenchmarkResult
+from benchmarks.base import BaseBenchmark
 from .config import (
     DEFAULT_RECORD_COUNT,
     DEFAULT_OPERATION_COUNT,

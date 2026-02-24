@@ -33,13 +33,13 @@ def get_benchmarks() -> dict[str, type[BaseBenchmark]]:
         except Exception as e:
             print(f"Warning: failed to load {name} benchmark: {e}", file=sys.stderr)
 
-    _try_register("beir", "strata_eval.benchmarks.beir.runner", "BeirBenchmark")
-    _try_register("ycsb", "strata_eval.benchmarks.ycsb.runner", "YcsbBenchmark")
-    _try_register("ann", "strata_eval.benchmarks.ann.runner", "AnnBenchmark")
-    _try_register("graphalytics", "strata_eval.benchmarks.graphalytics.runner", "GraphalyticsBenchmark")
-    _try_register("locomo", "strata_eval.benchmarks.locomo.runner", "LocomoBenchmark")
-    _try_register("longmemeval", "strata_eval.benchmarks.longmemeval.runner", "LongMemEvalBenchmark")
-    _try_register("ragas", "strata_eval.benchmarks.ragas_bench.runner", "RagasBenchmark")
-    _try_register("graphrag", "strata_eval.benchmarks.graphrag_bench.runner", "GraphRagBenchmark")
+    _try_register("beir", "benchmarks.beir.runner", "BeirBenchmark")
+    _try_register("ycsb", "benchmarks.ycsb.runner", "YcsbBenchmark")
+    _try_register("ann", "benchmarks.ann.runner", "AnnBenchmark")
+    _try_register("graphalytics", "benchmarks.graphalytics.runner", "GraphalyticsBenchmark")
+    _try_register("locomo", "benchmarks.locomo.runner", "LocomoBenchmark")
+    _try_register("longmemeval", "benchmarks.longmemeval.runner", "LongMemEvalBenchmark")
+    _try_register("ragas", "benchmarks.ragas_bench.runner", "RagasBenchmark")
+    _try_register("graphrag", "benchmarks.graphrag_bench.runner", "GraphRagBenchmark")
 
     return registry

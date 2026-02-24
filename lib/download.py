@@ -7,7 +7,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from .benchmarks import get_benchmarks
+from benchmarks import get_benchmarks
 
 
 def register_args(parser: argparse.ArgumentParser) -> None:

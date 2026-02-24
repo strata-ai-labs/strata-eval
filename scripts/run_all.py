@@ -50,7 +50,7 @@ def run_beir(modes: list[str], datasets: list[str]) -> list[str]:
         for mode in modes:
             label = f"BEIR: {dataset} / {mode}"
             if not run_command(
-                [sys.executable, "-m", "strata_eval", "beir",
+                [sys.executable, str(ROOT / "run.py"), "beir",
                  "--dataset", dataset, "--mode", mode],
                 label,
             ):
@@ -63,7 +63,7 @@ def run_ycsb(workloads: list[str], records: int, ops: int) -> list[str]:
     for wl in workloads:
         label = f"YCSB: workload {wl} ({records} records, {ops} ops)"
         if not run_command(
-            [sys.executable, "-m", "strata_eval", "ycsb",
+            [sys.executable, str(ROOT / "run.py"), "ycsb",
              "--workload", wl, "--records", str(records), "--ops", str(ops)],
             label,
         ):
@@ -76,7 +76,7 @@ def run_ann(datasets: list[str]) -> list[str]:
     for ds in datasets:
         # Download first
         dl_result = subprocess.run(
-            [sys.executable, "-m", "strata_eval", "download",
+            [sys.executable, str(ROOT / "run.py"), "download",
              "--bench", "ann", "--dataset", ds],
             cwd=str(ROOT),
         )
@@ -86,7 +86,7 @@ def run_ann(datasets: list[str]) -> list[str]:
 
         label = f"ANN: {ds}"
         if not run_command(
-            [sys.executable, "-m", "strata_eval", "ann", "--dataset", ds],
+            [sys.executable, str(ROOT / "run.py"), "ann", "--dataset", ds],
             label,
         ):
             failures.append(label)
@@ -98,7 +98,7 @@ def run_graphalytics(algorithms: list[str], dataset: str, runs: int) -> list[str
     for algo in algorithms:
         label = f"Graphalytics: {algo} on {dataset}"
         if not run_command(
-            [sys.executable, "-m", "strata_eval", "graphalytics",
+            [sys.executable, str(ROOT / "run.py"), "graphalytics",
              "--algorithm", algo, "--dataset", dataset, "--runs", str(runs)],
             label,
         ):
@@ -111,7 +111,7 @@ def generate_report(fmt: str = "markdown") -> None:
     print(f"  Generating {fmt} report")
     print(f"{'='*60}\n")
     subprocess.run(
-        [sys.executable, "-m", "strata_eval", "report", "--format", fmt],
+        [sys.executable, str(ROOT / "run.py"), "report", "--format", fmt],
         cwd=str(ROOT),
     )
 

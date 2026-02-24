@@ -14,11 +14,11 @@ import tempfile
 import time
 from pathlib import Path
 
-from ...schema import BenchmarkResult
-from ..base import BaseBenchmark
+from lib.schema import BenchmarkResult
+from benchmarks.base import BaseBenchmark
 from .config import ANN_DATASETS, DEFAULT_K, DEFAULT_BATCH_SIZE
 
-ROOT = Path(__file__).resolve().parent.parent.parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Number of warmup queries before timed measurement.
 _WARMUP_QUERIES = 100
@@ -49,7 +49,7 @@ class AnnBenchmark(BaseBenchmark):
         )
 
     def download(self, args: argparse.Namespace) -> None:
-        from ...download import download_file
+        from lib.download import download_file
 
         data_dir = Path(getattr(args, "data_dir", str(ROOT / "datasets" / "ann")))
         datasets = getattr(args, "dataset", None) or list(ANN_DATASETS.keys())

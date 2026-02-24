@@ -13,11 +13,11 @@ import argparse
 import os
 from pathlib import Path
 
-from ...schema import BenchmarkResult
-from ..base import BaseBenchmark
+from lib.schema import BenchmarkResult
+from benchmarks.base import BaseBenchmark
 from .config import GRAPHRAG_DATASET, LLM_ENV_VARS
 
-ROOT = Path(__file__).resolve().parent.parent.parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 class GraphRagBenchmark(BaseBenchmark):
@@ -75,7 +75,7 @@ class GraphRagBenchmark(BaseBenchmark):
         if not data_dir.exists():
             raise FileNotFoundError(
                 f"GraphRAG-Bench dataset not found at {data_dir}. "
-                f"Run: python -m strata_eval download --bench graphrag"
+                f"Run: python run.py download --bench graphrag"
             )
 
         raise NotImplementedError(
