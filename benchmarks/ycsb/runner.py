@@ -124,10 +124,11 @@ class YcsbBenchmark(BaseBenchmark):
 
     def validate(self, args: argparse.Namespace) -> bool:
         try:
-            from stratadb import Strata  # noqa: F401
+            from lib.strata_client import StrataClient  # noqa: F401
+            StrataClient._resolve_binary(None)
             return True
-        except ImportError:
-            print("ERROR: stratadb is not installed. Install it to run YCSB benchmarks.")
+        except FileNotFoundError:
+            print("ERROR: strata CLI binary not found. Add it to PATH or set STRATA_BIN.")
             return False
 
     # ---- Run --------------------------------------------------------------
@@ -168,7 +169,7 @@ class YcsbBenchmark(BaseBenchmark):
         dist_name: str,
         max_scan_length: int = 100,
     ) -> BenchmarkResult:
-        from stratadb import Strata
+        from lib.strata_client import StrataClient
 
         print(f"\n{'='*60}")
         print(f"  YCSB {spec.name}: {spec.description}")
@@ -176,8 +177,7 @@ class YcsbBenchmark(BaseBenchmark):
               f"field_length={field_length}  distribution={dist_name}")
         print(f"{'='*60}")
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db = Strata.open(tmpdir)
+        with tempfile.TemporaryDirectory() as tmpdir, StrataClient(db_path=tmpdir) as db:
 
             # -- Load phase ------------------------------------------------
             print("  Loading records...")

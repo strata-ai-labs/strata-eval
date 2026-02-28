@@ -77,9 +77,10 @@ class AnnBenchmark(BaseBenchmark):
             return False
 
         try:
-            from stratadb import Strata  # noqa: F401
-        except ImportError:
-            print("stratadb is required: pip install stratadb")
+            from lib.strata_client import StrataClient
+            StrataClient._resolve_binary(None)
+        except FileNotFoundError:
+            print("strata CLI binary not found. Add it to PATH or set STRATA_BIN.")
             return False
 
         # Check dataset files exist
@@ -95,7 +96,7 @@ class AnnBenchmark(BaseBenchmark):
 
     def run(self, args: argparse.Namespace) -> list[BenchmarkResult]:
         import numpy as np
-        from stratadb import Strata
+        from lib.strata_client import StrataClient
         from .datasets import load_dataset
 
         results: list[BenchmarkResult] = []
@@ -140,12 +141,11 @@ class AnnBenchmark(BaseBenchmark):
                 continue
 
             # Create Strata database in a temporary directory
-            with tempfile.TemporaryDirectory() as tmpdir:
-                db = Strata.open(tmpdir)
-                collection = db.vectors.create(
+            with tempfile.TemporaryDirectory() as tmpdir, StrataClient(db_path=tmpdir) as client:
+                collection = client.vectors.create(
                     "bench",
-                    dimension=train.shape[1],  # use actual dimension from data
-                    metric=info["metric"],
+                    train.shape[1],  # use actual dimension from data
+                    info["metric"],
                 )
 
                 # Build index — batch upsert
@@ -174,7 +174,7 @@ class AnnBenchmark(BaseBenchmark):
                 if warmup_count > 0:
                     print(f"  Warmup: {warmup_count} queries...")
                     for i in range(warmup_count):
-                        collection.search(query=test[i].tolist(), k=max_k)
+                        collection.search(test[i].tolist(), k=max_k)
 
                 # Query phase
                 print(f"  Querying {num_test} vectors (k={max_k})...")
@@ -185,7 +185,7 @@ class AnnBenchmark(BaseBenchmark):
                     q = test[i].tolist()
 
                     t0 = time.perf_counter_ns()
-                    hits = collection.search(query=q, k=max_k)
+                    hits = collection.search(q, k=max_k)
                     t1 = time.perf_counter_ns()
 
                     query_latencies_ns.append(t1 - t0)

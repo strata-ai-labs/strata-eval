@@ -58,12 +58,12 @@ class LocomoBenchmark(BaseBenchmark):
 
         Pipeline:
         1. Load conversation dataset
-        2. Index conversation turns into Strata KV with auto_embed
-        3. For each QA pair, retrieve relevant turns via db.search()
-        4. TODO: Generate answer via LLM (db.generate() or external API)
+        2. Index conversation turns into Strata KV with auto_embed via CLI
+        3. For each QA pair, retrieve relevant turns via client.search()
+        4. TODO: Generate answer via LLM
         5. TODO: Compute F1, ROUGE-L, FactScore
         """
-        from stratadb import Strata
+        from lib.strata_client import StrataClient
 
         data_dir = Path(args.data_dir)
         dataset_path = data_dir / "locomo.json"
@@ -88,14 +88,14 @@ class LocomoBenchmark(BaseBenchmark):
                 continue
 
             # Index turns into Strata
-            with tempfile.TemporaryDirectory() as tmpdir:
-                db = Strata.open(tmpdir, auto_embed=(args.mode == "hybrid"))
+            with tempfile.TemporaryDirectory() as tmpdir, \
+                    StrataClient(db_path=tmpdir, auto_embed=(args.mode == "hybrid")) as client:
 
                 t0 = time.perf_counter()
                 for i, turn in enumerate(turns):
                     text = turn if isinstance(turn, str) else turn.get("text", str(turn))
-                    db.kv.put(f"turn:{i:06d}", text)
-                db.flush()
+                    client.kv.put(f"turn:{i:06d}", text)
+                client.flush()
                 index_time = time.perf_counter() - t0
 
                 # Retrieve for each QA pair
@@ -103,7 +103,7 @@ class LocomoBenchmark(BaseBenchmark):
                 retrieval_results = []
                 for qa in qa_pairs:
                     question = qa if isinstance(qa, str) else qa.get("question", str(qa))
-                    hits = db.search(question, k=args.k, mode=args.mode, primitives=["kv"])
+                    hits = client.search(question, k=args.k, mode=args.mode, primitives=["kv"])
                     retrieval_results.append({
                         "question": question,
                         "retrieved": [h["entity"] for h in hits],
@@ -111,14 +111,7 @@ class LocomoBenchmark(BaseBenchmark):
                 search_time = time.perf_counter() - t1
 
                 # TODO: Generate answers using LLM
-                # For each retrieval_result:
-                #   context = "\n".join(db.kv.get(key) for key in result["retrieved"])
-                #   answer = db.generate(model=..., prompt=f"Context: {context}\nQuestion: {question}\nAnswer:")
-                #
-                # TODO: Compute metrics
-                #   f1 = compute_f1(predicted_answer, ground_truth)
-                #   rouge_l = compute_rouge_l(predicted_answer, ground_truth)
-                #   factscore = compute_factscore(predicted_answer, context)
+                # TODO: Compute metrics (F1, ROUGE-L, FactScore)
 
                 print(f"  Conversation {conv_idx}: {len(turns)} turns, "
                       f"{len(qa_pairs)} QA pairs, "

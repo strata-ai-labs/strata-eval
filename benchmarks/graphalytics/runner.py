@@ -1,11 +1,8 @@
 """LDBC Graphalytics benchmark runner -- evaluates graph algorithm performance on Strata.
 
-Stores graph adjacency lists in Strata KV, reads them back, then runs
-algorithms in Python. This benchmarks Strata as a graph storage layer
-and measures Python algorithm execution time separately.
-
-NOTE: When Strata's native graph API becomes available in the Python SDK,
-the algorithms should be migrated to use native graph operations.
+Uses Strata's native graph API via the CLI subprocess wrapper.  BFS runs
+natively on the Strata engine.  Other algorithms read the graph via
+``graph neighbors`` / ``graph list-nodes`` and execute in Python.
 """
 
 from __future__ import annotations
@@ -13,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -252,7 +250,7 @@ class GraphalyticsBenchmark(BaseBenchmark):
         print(f"Place the extracted directory at: {data_dir / dataset_name}")
 
     def run(self, args: argparse.Namespace) -> list[BenchmarkResult]:
-        from stratadb import Strata
+        from lib.strata_client import StrataClient
 
         dataset_name = args.dataset
         data_dir = Path(args.data_dir) / dataset_name
@@ -306,35 +304,70 @@ class GraphalyticsBenchmark(BaseBenchmark):
         print(f"  SSSP source: {sssp_source}")
 
         # ------------------------------------------------------------------
-        # Load graph into Strata KV
+        # Load graph into Strata via native graph API
         # ------------------------------------------------------------------
-        with tempfile.TemporaryDirectory(prefix="strata_graphalytics_") as tmpdir:
-            db = Strata.open(tmpdir)
+        with tempfile.TemporaryDirectory(prefix="strata_graphalytics_") as tmpdir, \
+                StrataClient(db_path=tmpdir) as client:
 
-            print("Loading graph into Strata KV...")
+            client.graph.create("bench")
+
+            # Build bulk-insert payload from LDBC dataset
+            nodes = [{"id": str(vid)} for vid in ds.vertices]
+            edges = []
+            for src, neighbors in ds.adj.items():
+                for dst in neighbors:
+                    weight = ds.edge_weights.get((src, dst), 1.0)
+                    edges.append({
+                        "src": str(src), "dst": str(dst),
+                        "edge_type": "edge", "weight": float(weight),
+                    })
+            # For undirected graphs, insert reverse edges too
+            if not ds.directed:
+                reverse_edges = []
+                existing = {(e["src"], e["dst"]) for e in edges}
+                for e in edges:
+                    if (e["dst"], e["src"]) not in existing:
+                        reverse_edges.append({
+                            "src": e["dst"], "dst": e["src"],
+                            "edge_type": "edge", "weight": e["weight"],
+                        })
+                edges.extend(reverse_edges)
+
+            print("Loading graph into Strata via bulk-insert...")
             t0 = time.perf_counter()
-            for vid, neighbors in ds.adj.items():
-                db.kv.put(f"adj:{vid}", json.dumps(neighbors))
-            # Also store undirected adjacency for WCC/LCC
-            for vid, neighbors in ds.undirected_adj.items():
-                db.kv.put(f"uadj:{vid}", json.dumps(neighbors))
+
+            # Write payload to temp file for bulk insert
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+                json.dump({"nodes": nodes, "edges": edges}, f)
+                bulk_file = f.name
+            try:
+                client.graph.bulk_insert("bench", file_path=bulk_file)
+            finally:
+                os.unlink(bulk_file)
+
             load_time = time.perf_counter() - t0
             print(f"  Load time: {load_time:.3f}s")
 
-            # Read back adjacency from Strata to prove round-trip
-            print("Reading adjacency back from Strata KV...")
-            t0 = time.perf_counter()
+            # ------------------------------------------------------------------
+            # Build adjacency dicts from graph API for Python algorithms
+            # ------------------------------------------------------------------
+            need_adj = any(a != "bfs" for a in algorithms_to_run)
             directed_adj: dict[int, list[int]] = {}
             undirected_adj: dict[int, list[int]] = {}
-            for vid in ds.vertices:
-                # Directed adjacency
-                raw = db.kv.get(f"adj:{vid}")
-                directed_adj[vid] = json.loads(raw) if raw else []
-                # Undirected adjacency
-                raw_u = db.kv.get(f"uadj:{vid}")
-                undirected_adj[vid] = json.loads(raw_u) if raw_u else []
-            read_time = time.perf_counter() - t0
-            print(f"  Read time: {read_time:.3f}s")
+            read_time = 0.0
+
+            if need_adj:
+                print("Reading adjacency from Strata graph API...")
+                t0 = time.perf_counter()
+                for vid in ds.vertices:
+                    # Directed (outgoing) neighbors
+                    nbrs = client.graph.neighbors("bench", str(vid), direction="outgoing")
+                    directed_adj[vid] = [int(n.get("id", n.get("node_id", n.get("dst", 0)))) for n in nbrs]
+                    # Undirected (both) neighbors
+                    nbrs_both = client.graph.neighbors("bench", str(vid), direction="both")
+                    undirected_adj[vid] = [int(n.get("id", n.get("node_id", n.get("dst", 0)))) for n in nbrs_both]
+                read_time = time.perf_counter() - t0
+                print(f"  Read time: {read_time:.3f}s")
 
             # ------------------------------------------------------------------
             # Run each algorithm
@@ -347,8 +380,6 @@ class GraphalyticsBenchmark(BaseBenchmark):
                 print(f"{'='*60}")
 
                 # Choose the right adjacency list per algorithm
-                # WCC, LCC: undirected (both directions, self-loops removed)
-                # BFS, PageRank, CDLP, SSSP: directed (as-is from the graph)
                 if alg_name in ("wcc", "lcc"):
                     adj = undirected_adj
                 else:
@@ -361,7 +392,21 @@ class GraphalyticsBenchmark(BaseBenchmark):
                     t_start = time.perf_counter()
 
                     if alg_name == "bfs":
-                        last_result = algo.bfs(adj, bfs_source)
+                        # Use native Strata BFS
+                        bfs_out = client.graph.bfs(
+                            "bench", str(bfs_source), 999999,
+                            direction="outgoing",
+                        )
+                        # Convert to {int_vid: int_depth} format.
+                        # JSON dict keys are always strings, so look up str(vid).
+                        depths = bfs_out.get("depths", {})
+                        last_result = {}
+                        for vid in ds.vertices:
+                            d = depths.get(str(vid))
+                            if d is not None:
+                                last_result[vid] = int(d)
+                            else:
+                                last_result[vid] = UNREACHABLE_INT
                     elif alg_name == "wcc":
                         last_result = algo.wcc(adj)
                     elif alg_name == "pagerank":

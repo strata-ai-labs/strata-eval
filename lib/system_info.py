@@ -39,10 +39,14 @@ def git_is_dirty() -> bool | None:
 
 
 def get_sdk_version() -> str:
+    """Get the Strata version from the CLI binary via ping."""
+    import tempfile
     try:
-        import stratadb
-        return getattr(stratadb, "__version__", "unknown")
-    except ImportError:
+        from lib.strata_client import StrataClient
+        with tempfile.TemporaryDirectory() as d:
+            with StrataClient(db_path=d, cache=True) as client:
+                return client.ping()
+    except Exception:
         return "not installed"
 
 

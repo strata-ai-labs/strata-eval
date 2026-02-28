@@ -70,8 +70,8 @@ class LongMemEvalBenchmark(BaseBenchmark):
 
         Pipeline (all steps require implementation):
         1. Load multi-session chat histories from data_dir
-        2. Index sessions into Strata KV with auto_embed
-        3. For each of 500 questions, retrieve relevant context
+        2. Index sessions into Strata KV via StrataClient with auto_embed
+        3. For each of 500 questions, retrieve relevant context via client.search()
         4. Generate answer using LLM
         5. Judge accuracy using LLM (GPT-4o as judge)
         6. Group results by ability (IE, MR, TR, KU, Abstention)

@@ -125,10 +125,14 @@ def clean_results() -> None:
 
 
 def get_version() -> str:
+    """Get the Strata version from the CLI binary via ping."""
+    import tempfile
     try:
-        import stratadb
-        return getattr(stratadb, "__version__", "unknown")
-    except ImportError:
+        from lib.strata_client import StrataClient
+        with tempfile.TemporaryDirectory() as d:
+            with StrataClient(db_path=d, cache=True) as client:
+                return client.ping()
+    except Exception:
         return "not installed"
 
 
@@ -187,7 +191,7 @@ def main():
     )
     args = parser.parse_args()
 
-    print(f"strata-eval batch runner — stratadb {get_version()}")
+    print(f"strata-eval batch runner — strata {get_version()}")
 
     if args.clean:
         clean_results()

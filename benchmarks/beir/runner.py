@@ -56,6 +56,15 @@ class BeirBenchmark(BaseBenchmark):
             help="Embedding model for hybrid/hybrid-llm modes (default: miniLM)",
         )
 
+    def validate(self, args: argparse.Namespace) -> bool:
+        try:
+            from lib.strata_client import StrataClient
+            StrataClient._resolve_binary(None)
+        except FileNotFoundError:
+            print("strata CLI binary not found. Add it to PATH or set STRATA_BIN.")
+            return False
+        return True
+
     def download(self, args: argparse.Namespace) -> None:
         raw = getattr(args, "dataset", None) or []
         datasets = raw if isinstance(raw, list) else [raw]

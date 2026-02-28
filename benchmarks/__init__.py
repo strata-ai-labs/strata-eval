@@ -23,7 +23,7 @@ def get_benchmarks() -> dict[str, type[BaseBenchmark]]:
             missing = getattr(e, "name", None)
             # These are the external optional deps that justify silently skipping.
             expected_missing = {
-                "stratadb", "beir", "sentence_transformers", "pytrec_eval",
+                "beir", "sentence_transformers", "pytrec_eval",
                 "h5py", "numpy", "ragas", "rouge_score", "openai",
             }
             if missing and missing.split(".")[0] in expected_missing:

@@ -1,6 +1,8 @@
-stratadb>=0.12
 numpy>=1.24
 tqdm>=4.60
+
+# Strata CLI binary required (not a pip package).
+# Ensure 'strata' is on PATH or set the STRATA_BIN environment variable.
 
 # BEIR benchmarks (optional)
 # beir

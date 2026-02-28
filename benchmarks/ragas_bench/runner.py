@@ -67,12 +67,12 @@ class RagasBenchmark(BaseBenchmark):
         """Run RAGAS evaluation.
 
         Pipeline:
-        1. Index corpus into Strata KV with auto_embed
+        1. Index corpus into Strata KV with auto_embed via CLI
         2. For each test question, retrieve top-k passages
-        3. TODO: Generate answer using LLM via db.generate()
+        3. TODO: Generate answer using LLM
         4. TODO: Evaluate with RAGAS metrics (faithfulness, relevance, precision, recall)
         """
-        from stratadb import Strata
+        from lib.strata_client import StrataClient
 
         data_dir = Path(args.data_dir)
         corpus_path = Path(args.corpus) if args.corpus else data_dir / "corpus.jsonl"
@@ -100,14 +100,14 @@ class RagasBenchmark(BaseBenchmark):
         print(f"Loaded {len(questions)} questions")
 
         # Index corpus into Strata
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db = Strata.open(tmpdir, auto_embed=(args.mode == "hybrid"))
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                StrataClient(db_path=tmpdir, auto_embed=(args.mode == "hybrid")) as client:
 
             t0 = time.perf_counter()
             for doc in corpus:
                 doc_id = doc.get("id", doc.get("_id", str(hash(doc["text"][:100]))))
-                db.kv.put(str(doc_id), doc["text"])
-            db.flush()
+                client.kv.put(str(doc_id), doc["text"])
+            client.flush()
             index_time = time.perf_counter() - t0
             print(f"Indexed {len(corpus)} documents in {index_time:.1f}s")
 
@@ -116,8 +116,8 @@ class RagasBenchmark(BaseBenchmark):
             retrieval_results = []
             for q in questions:
                 question_text = q["question"]
-                hits = db.search(question_text, k=args.k, mode=args.mode, primitives=["kv"])
-                contexts = [db.kv.get(h["entity"]) for h in hits]
+                hits = client.search(question_text, k=args.k, mode=args.mode, primitives=["kv"])
+                contexts = [client.kv.get(h["entity"]) for h in hits]
                 retrieval_results.append({
                     "question": question_text,
                     "contexts": contexts,
@@ -127,38 +127,7 @@ class RagasBenchmark(BaseBenchmark):
             print(f"Retrieved for {len(questions)} questions in {search_time:.1f}s")
 
         # TODO: Generate answers using LLM
-        # for result in retrieval_results:
-        #     context_str = "\n\n".join(result["contexts"])
-        #     answer = db.generate(
-        #         model=os.environ["STRATA_MODEL_NAME"],
-        #         prompt=f"Context:\n{context_str}\n\nQuestion: {result['question']}\nAnswer:",
-        #     )
-        #     result["answer"] = answer["text"]
-        #
-        # TODO: Evaluate with RAGAS
-        # from ragas import evaluate
-        # from ragas.metrics import faithfulness, answer_relevancy, context_precision, context_recall
-        # from datasets import Dataset
-        #
-        # eval_dataset = Dataset.from_dict({
-        #     "question": [r["question"] for r in retrieval_results],
-        #     "answer": [r["answer"] for r in retrieval_results],
-        #     "contexts": [r["contexts"] for r in retrieval_results],
-        #     "ground_truth": [r["ground_truth"] for r in retrieval_results],
-        # })
-        # scores = evaluate(eval_dataset, metrics=[faithfulness, answer_relevancy, context_precision, context_recall])
-        #
-        # return [BenchmarkResult(
-        #     benchmark=f"ragas/{args.mode}",
-        #     category="ragas",
-        #     parameters={...},
-        #     metrics={
-        #         "faithfulness": scores["faithfulness"],
-        #         "answer_relevance": scores["answer_relevancy"],
-        #         "context_precision": scores["context_precision"],
-        #         "context_recall": scores["context_recall"],
-        #     },
-        # )]
+        # TODO: Evaluate with RAGAS metrics
 
         raise NotImplementedError(
             "RAGAS benchmark requires LLM integration for answer generation and metric evaluation. "

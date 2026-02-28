@@ -40,6 +40,10 @@ def main(argv: list[str] | None = None) -> None:
         "--output-dir", type=str, default=str(ROOT / "results"),
         help="Directory for result JSON files (default: results/)",
     )
+    parser.add_argument(
+        "--strata-bin", type=str, default=None,
+        help="Path to the strata CLI binary (default: auto-detect via PATH / STRATA_BIN)",
+    )
 
     subparsers = parser.add_subparsers(dest="command")
 
@@ -61,6 +65,11 @@ def main(argv: list[str] | None = None) -> None:
     report_mod.register_args(report_parser)
 
     parsed = parser.parse_args(args)
+
+    # If --strata-bin was provided, propagate it via environment variable
+    if getattr(parsed, "strata_bin", None):
+        import os
+        os.environ["STRATA_BIN"] = parsed.strata_bin
 
     if parsed.command is None:
         parser.print_help()

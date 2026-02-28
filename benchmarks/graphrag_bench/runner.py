@@ -60,16 +60,15 @@ class GraphRagBenchmark(BaseBenchmark):
         Pipeline (all steps require implementation):
         1. Load domain documents from dataset
         2. Extract triples from text via LLM (subject, predicate, object)
-        3. Store triples in Strata KV as graph edges
-        4. For each question, perform graph-based retrieval (multi-hop)
+        3. Store triples in Strata's native graph API via StrataClient
+        4. For each question, perform graph-based retrieval (multi-hop via client.graph.bfs/neighbors)
         5. Generate answer using retrieved graph context + LLM
         6. Evaluate accuracy, lexical overlap, reasoning quality
 
-        The graph storage approach:
-          - db.kv.put(f"triple:{id}", json.dumps({"s": s, "p": p, "o": o}))
-          - db.kv.put(f"out:{subject}:{predicate}", object)
-          - db.kv.put(f"in:{object}:{predicate}", subject)
-          - Multi-hop: BFS/DFS over the KV-stored graph edges
+        The graph storage approach (using native graph API):
+          - client.graph.create("knowledge")
+          - client.graph.bulk_insert("knowledge", nodes=[...], edges=[...])
+          - Multi-hop: client.graph.bfs() / client.graph.neighbors()
         """
         data_dir = Path(args.data_dir)
         if not data_dir.exists():
