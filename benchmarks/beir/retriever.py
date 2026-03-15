@@ -171,7 +171,7 @@ class StrataSearch(BaseSearch):
         query_ids: list[str] = []
 
         for qid, query_text in queries.items():
-            parts = ["search", shlex.quote(query_text), str(top_k)]
+            parts = ["search", shlex.quote(query_text), "--k", str(top_k)]
             parts.extend(search_flags)
             parts.extend(["--primitives", "kv"])
             search_cmds.append(" ".join(parts))

@@ -145,7 +145,7 @@ class StrataClient:
         expand: bool = False,
         rerank: bool = False,
     ) -> list[dict]:
-        parts = ["search", shlex.quote(query), str(k)]
+        parts = ["search", shlex.quote(query), "--k", str(k)]
         if mode:
             parts.extend(["--mode", mode])
         if primitives:
@@ -403,6 +403,10 @@ def _unwrap(value):
             return inner
 
         if key == "SearchResults":
+            # v0.6+: inner is {"hits": [...], "stats": {...}}
+            # Legacy: inner is a bare list of hits
+            if isinstance(inner, dict):
+                return inner.get("hits", [])
             return inner
 
         if key == "VectorMatches":
