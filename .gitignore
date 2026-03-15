@@ -14,4 +14,7 @@ build/
 .ruff_cache/
 .pytest_cache/
 *.hdf5
+*.log
 .DS_Store
+.db_cache/
+scratch/

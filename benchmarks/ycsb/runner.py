@@ -1,8 +1,9 @@
 """YCSB benchmark runner -- evaluates Strata KV throughput and latency.
 
-Note: This is a single-threaded YCSB implementation. Standard YCSB supports
-multi-threaded operation, but this version focuses on single-client sequential
-performance to isolate database latency from concurrency overhead.
+All timed operations are executed by piping pre-generated commands directly
+to the ``strata`` CLI binary.  Python is used only for workload generation
+(untimed) and result recording — there is no Python overhead per database
+operation in the timing loop.
 """
 
 from __future__ import annotations
@@ -10,10 +11,12 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import shlex
 import tempfile
 import time
 
 from lib.schema import BenchmarkResult
+from lib.strata_client import StrataClient, batch_execute
 from benchmarks.base import BaseBenchmark
 from .config import (
     DEFAULT_RECORD_COUNT,
@@ -30,34 +33,6 @@ from .workloads import (
     generate_value,
     format_key,
 )
-
-
-# ---------------------------------------------------------------------------
-# Percentile helper
-# ---------------------------------------------------------------------------
-
-def _percentiles(latencies_ns: list[int]) -> dict[str, float]:
-    """Compute p50, p95, p99, p99.9 from a list of nanosecond latencies.
-
-    Uses the nearest-rank method. Returns values in **microseconds**.
-    """
-    if not latencies_ns:
-        return {"p50_us": 0.0, "p95_us": 0.0, "p99_us": 0.0, "p99_9_us": 0.0}
-    latencies_ns.sort()
-    n = len(latencies_ns)
-
-    def _pct(p: float) -> float:
-        # Nearest-rank: ceil(p/100 * n) - 1, clamped to [0, n-1]
-        import math
-        idx = min(max(math.ceil(p / 100.0 * n) - 1, 0), n - 1)
-        return latencies_ns[idx] / 1000.0  # ns -> us
-
-    return {
-        "p50_us": round(_pct(50), 2),
-        "p95_us": round(_pct(95), 2),
-        "p99_us": round(_pct(99), 2),
-        "p99_9_us": round(_pct(99.9), 2),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +99,6 @@ class YcsbBenchmark(BaseBenchmark):
 
     def validate(self, args: argparse.Namespace) -> bool:
         try:
-            from lib.strata_client import StrataClient  # noqa: F401
             StrataClient._resolve_binary(None)
             return True
         except FileNotFoundError:
@@ -169,7 +143,6 @@ class YcsbBenchmark(BaseBenchmark):
         dist_name: str,
         max_scan_length: int = 100,
     ) -> BenchmarkResult:
-        from lib.strata_client import StrataClient
 
         print(f"\n{'='*60}")
         print(f"  YCSB {spec.name}: {spec.description}")
@@ -177,139 +150,109 @@ class YcsbBenchmark(BaseBenchmark):
               f"field_length={field_length}  distribution={dist_name}")
         print(f"{'='*60}")
 
-        with tempfile.TemporaryDirectory() as tmpdir, StrataClient(db_path=tmpdir) as db:
+        with tempfile.TemporaryDirectory() as tmpdir:
 
-            # -- Load phase ------------------------------------------------
-            print("  Loading records...")
-            load_start = time.perf_counter()
+            # -- Generate load commands (untimed) --------------------------
+            print("  Generating load commands...")
+            t_gen = time.perf_counter()
+            load_cmds: list[str] = []
+            for i in range(records):
+                key = format_key(i)
+                value = json.dumps(generate_value(field_count, field_length))
+                load_cmds.append(f"kv put {shlex.quote(key)} {shlex.quote(value)}")
+            load_cmds.append("flush")
+            gen_time = time.perf_counter() - t_gen
+            print(f"  Generated {len(load_cmds)} load commands in {gen_time:.2f}s")
 
-            # Pre-generate values and batch insert in chunks for efficiency
-            BATCH_SIZE = 1000
-            for batch_start in range(0, records, BATCH_SIZE):
-                batch_end = min(batch_start + BATCH_SIZE, records)
-                for i in range(batch_start, batch_end):
-                    key = format_key(i)
-                    value = generate_value(field_count, field_length)
-                    db.kv.put(key, json.dumps(value))
-
-            load_elapsed = time.perf_counter() - load_start
+            # -- Execute load via CLI (timed) ------------------------------
+            print("  Loading records via CLI...")
+            load_elapsed, _ = batch_execute(
+                load_cmds,
+                db_path=tmpdir,
+                parse_responses=False,
+            )
             load_throughput = records / load_elapsed if load_elapsed > 0 else 0
             print(f"  Load complete: {records} records in {load_elapsed:.2f}s "
                   f"({load_throughput:.0f} ops/s)")
 
-            # -- Execute phase ---------------------------------------------
-            print("  Running operations...")
-            key_counter = records  # for inserts
-
-            # Build the distribution generator
+            # -- Generate execute commands (untimed) -----------------------
+            print("  Generating execute commands...")
+            t_gen = time.perf_counter()
+            key_counter = records
             gen = self._make_generator(dist_name, records)
-
-            # Build the weighted operation selector
             op_choices, op_weights = self._build_op_selector(spec)
 
-            # Per-operation latency tracking
-            latencies: dict[str, list[int]] = {
-                "read": [], "update": [], "insert": [], "scan": [], "rmw": [],
-            }
+            exec_cmds: list[str] = []
+            op_counts: dict[str, int] = {}
 
-            exec_start = time.perf_counter()
             for _ in range(ops):
                 op = random.choices(op_choices, weights=op_weights, k=1)[0]
+                op_counts[op] = op_counts.get(op, 0) + 1
 
                 if op == "read":
-                    idx = gen.next()
-                    key = format_key(idx)
-                    t0 = time.perf_counter_ns()
-                    db.kv.get(key)
-                    latencies["read"].append(time.perf_counter_ns() - t0)
+                    key = format_key(gen.next())
+                    exec_cmds.append(f"kv get {shlex.quote(key)}")
 
                 elif op == "update":
-                    idx = gen.next()
-                    key = format_key(idx)
-                    # Generate value OUTSIDE the timing window
-                    new_value = json.dumps(generate_value(field_count, field_length))
-                    t0 = time.perf_counter_ns()
-                    db.kv.put(key, new_value)
-                    latencies["update"].append(time.perf_counter_ns() - t0)
+                    key = format_key(gen.next())
+                    value = json.dumps(generate_value(field_count, field_length))
+                    exec_cmds.append(f"kv put {shlex.quote(key)} {shlex.quote(value)}")
 
                 elif op == "insert":
-                    new_key = format_key(key_counter)
-                    # Generate value OUTSIDE the timing window
+                    key = format_key(key_counter)
                     value = json.dumps(generate_value(field_count, field_length))
-                    t0 = time.perf_counter_ns()
-                    db.kv.put(new_key, value)
-                    latencies["insert"].append(time.perf_counter_ns() - t0)
+                    exec_cmds.append(f"kv put {shlex.quote(key)} {shlex.quote(value)}")
                     key_counter += 1
-                    # Update latest-aware generators (incremental O(1) update)
                     if hasattr(gen, "set_n"):
                         gen.set_n(key_counter)
 
                 elif op == "scan":
-                    idx = gen.next()
-                    key = format_key(idx)
+                    key = format_key(gen.next())
                     scan_length = random.randint(1, max_scan_length)
-                    # Range scan: use the full key as the prefix start.
-                    # db.kv.list with prefix=key returns keys >= key with
-                    # the same prefix, approximating a YCSB range scan.
-                    t0 = time.perf_counter_ns()
-                    db.kv.list(prefix=key, limit=scan_length)
-                    latencies["scan"].append(time.perf_counter_ns() - t0)
+                    exec_cmds.append(
+                        f"kv list --prefix {shlex.quote(key)} --limit {scan_length}"
+                    )
 
                 elif op == "rmw":
-                    idx = gen.next()
-                    key = format_key(idx)
-                    # Read-modify-write: read the existing value, modify it,
-                    # then write back. Value generation is outside timing.
-                    new_field_value = "".join(
-                        random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=field_length)
-                    )
-                    t0 = time.perf_counter_ns()
-                    existing = db.kv.get(key)
-                    # Modify: replace field0 in the existing record
-                    if existing:
-                        try:
-                            record = json.loads(existing)
-                            record["field0"] = new_field_value
-                            db.kv.put(key, json.dumps(record))
-                        except (json.JSONDecodeError, TypeError):
-                            db.kv.put(key, json.dumps({"field0": new_field_value}))
-                    else:
-                        db.kv.put(key, json.dumps({"field0": new_field_value}))
-                    latencies["rmw"].append(time.perf_counter_ns() - t0)
+                    # Read-modify-write: pre-generate the replacement value.
+                    # The CLI will execute get then put sequentially.  We
+                    # measure the combined cost of both operations.
+                    key = format_key(gen.next())
+                    value = json.dumps(generate_value(field_count, field_length))
+                    exec_cmds.append(f"kv get {shlex.quote(key)}")
+                    exec_cmds.append(f"kv put {shlex.quote(key)} {shlex.quote(value)}")
 
-            exec_elapsed = time.perf_counter() - exec_start
+            gen_time = time.perf_counter() - t_gen
+            print(f"  Generated {len(exec_cmds)} execute commands "
+                  f"({ops} ops) in {gen_time:.2f}s")
+
+            # -- Execute workload via CLI (timed) --------------------------
+            print("  Running operations via CLI...")
+            exec_elapsed, _ = batch_execute(
+                exec_cmds,
+                db_path=tmpdir,
+                parse_responses=False,
+            )
             exec_throughput = ops / exec_elapsed if exec_elapsed > 0 else 0
 
         # -- Aggregate metrics ---------------------------------------------
-        all_latencies: list[int] = []
-        for lats in latencies.values():
-            all_latencies.extend(lats)
-
-        overall_pct = _percentiles(all_latencies)
+        avg_latency_us = (exec_elapsed / ops * 1e6) if ops > 0 else 0
 
         metrics: dict[str, object] = {
             "load_time_s": round(load_elapsed, 3),
             "load_throughput_ops": round(load_throughput, 1),
             "exec_time_s": round(exec_elapsed, 3),
             "exec_throughput_ops": round(exec_throughput, 1),
-            "overall_p50_us": overall_pct["p50_us"],
-            "overall_p95_us": overall_pct["p95_us"],
-            "overall_p99_us": overall_pct["p99_us"],
-            "overall_p99_9_us": overall_pct["p99_9_us"],
+            "avg_latency_us": round(avg_latency_us, 2),
+            "total_commands": len(exec_cmds),
         }
 
         # Per-operation breakdown
-        for op_name, lats in latencies.items():
-            if lats:
-                pct = _percentiles(lats)
-                metrics[f"{op_name}_count"] = len(lats)
-                metrics[f"{op_name}_p50_us"] = pct["p50_us"]
-                metrics[f"{op_name}_p95_us"] = pct["p95_us"]
-                metrics[f"{op_name}_p99_us"] = pct["p99_us"]
-                metrics[f"{op_name}_p99_9_us"] = pct["p99_9_us"]
+        for op_name, count in op_counts.items():
+            metrics[f"{op_name}_count"] = count
 
         # -- Print summary -------------------------------------------------
-        self._print_summary(spec, dist_name, records, ops, metrics)
+        self._print_summary(spec, dist_name, records, ops, metrics, op_counts)
 
         # Benchmark name: use human-readable record count
         rec_label = f"{records // 1000}k" if records >= 1000 else str(records)
@@ -367,27 +310,14 @@ class YcsbBenchmark(BaseBenchmark):
 
     @staticmethod
     def _print_summary(spec: WorkloadSpec, dist_name: str, records: int, ops: int,
-                       metrics: dict) -> None:
+                       metrics: dict, op_counts: dict) -> None:
         print(f"\n  {'--- Results ---':^50}")
         print(f"  Load:    {metrics['load_time_s']:.3f}s  "
               f"({metrics['load_throughput_ops']:.0f} ops/s)")
         print(f"  Execute: {metrics['exec_time_s']:.3f}s  "
               f"({metrics['exec_throughput_ops']:.0f} ops/s)")
-        print(f"\n  {'--- Latency (microseconds) ---':^50}")
-        print(f"  {'Operation':<12} {'p50':>10} {'p95':>10} {'p99':>10} {'p99.9':>10}")
-        print(f"  {'-'*52}")
-        print(f"  {'overall':<12} "
-              f"{metrics['overall_p50_us']:>10.1f} "
-              f"{metrics['overall_p95_us']:>10.1f} "
-              f"{metrics['overall_p99_us']:>10.1f} "
-              f"{metrics['overall_p99_9_us']:>10.1f}")
-        for op_name in ("read", "update", "insert", "scan", "rmw"):
-            count_key = f"{op_name}_count"
-            if count_key in metrics:
-                print(f"  {op_name:<12} "
-                      f"{metrics[f'{op_name}_p50_us']:>10.1f} "
-                      f"{metrics[f'{op_name}_p95_us']:>10.1f} "
-                      f"{metrics[f'{op_name}_p99_us']:>10.1f} "
-                      f"{metrics[f'{op_name}_p99_9_us']:>10.1f}"
-                      f"  (n={metrics[count_key]})")
+        print(f"  Avg latency: {metrics['avg_latency_us']:.1f} us/op")
+        print(f"\n  {'--- Operation Mix ---':^50}")
+        for op_name, count in sorted(op_counts.items()):
+            print(f"  {op_name:<12} {count:>10}")
         print(f"{'='*60}\n")

@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 
@@ -432,3 +433,109 @@ def _unwrap(value):
 
     # If we don't recognise the shape, return as-is
     return value
+
+
+# ======================================================================
+# Batch execution — no Python overhead in the timing loop
+# ======================================================================
+
+def _parse_json_stream(output: str) -> list:
+    """Parse a stream of pretty-printed JSON values from CLI stdout.
+
+    The strata CLI outputs one JSON value per command, potentially
+    pretty-printed across multiple lines.  This parser accumulates lines
+    and attempts ``json.loads`` after each, emitting a result whenever a
+    complete JSON value is found.
+    """
+    results: list = []
+    buf: list[str] = []
+    for line in output.split("\n"):
+        if not line.strip():
+            continue
+        buf.append(line)
+        joined = "\n".join(buf)
+        try:
+            parsed = json.loads(joined)
+            results.append(_unwrap(parsed))
+            buf = []
+        except json.JSONDecodeError:
+            continue
+    return results
+
+
+def batch_execute(
+    commands: list[str],
+    *,
+    db_path: str,
+    binary: str | None = None,
+    auto_embed: bool = False,
+    cache: bool = False,
+    parse_responses: bool = True,
+) -> tuple[float, list]:
+    """Pipe commands to a fresh ``strata`` process and return ``(elapsed_s, responses)``.
+
+    All commands are written to a temporary file and fed to the CLI via
+    stdin.  Only the strata process execution time is measured — there is
+    **no Python overhead per operation**.  Use this for benchmark timing
+    loops instead of the interactive :class:`StrataClient` pipe.
+
+    Parameters
+    ----------
+    commands:
+        One CLI command per element (e.g. ``'kv get "mykey"'``).
+    db_path:
+        Path to the Strata database directory.
+    binary:
+        Explicit path to the ``strata`` binary (optional).
+    auto_embed:
+        Pass ``--auto-embed`` to the CLI process.
+    cache:
+        Pass ``--cache`` for an ephemeral in-memory database.
+    parse_responses:
+        If *False*, discard stdout and return an empty list.  Use this
+        for load phases where individual responses are not needed.
+
+    Returns
+    -------
+    (elapsed_seconds, responses)
+        Wall-clock time of the CLI process and the list of parsed/unwrapped
+        response values (one per command).
+    """
+    resolved_binary = StrataClient._resolve_binary(binary)
+    args = [resolved_binary, "--json", "--db", db_path]
+    if cache:
+        args.append("--cache")
+    if auto_embed:
+        args.append("--auto-embed")
+
+    # Write commands to a temp file to avoid pipe buffer limits on
+    # large workloads (100K+ commands).
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", delete=False,
+    ) as f:
+        for cmd in commands:
+            f.write(cmd + "\n")
+        cmd_path = f.name
+
+    try:
+        with open(cmd_path) as stdin_file:
+            stdout_target = subprocess.PIPE if parse_responses else subprocess.DEVNULL
+            t0 = time.perf_counter()
+            proc = subprocess.run(
+                args,
+                stdin=stdin_file,
+                stdout=stdout_target,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            elapsed = time.perf_counter() - t0
+    finally:
+        os.unlink(cmd_path)
+
+    if proc.returncode != 0 and not (parse_responses and proc.stdout):
+        raise StrataError(
+            f"Batch execute failed (rc={proc.returncode}): {proc.stderr.strip()}"
+        )
+
+    responses = _parse_json_stream(proc.stdout) if parse_responses else []
+    return elapsed, responses

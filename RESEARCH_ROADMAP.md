@@ -231,14 +231,14 @@ not, reviewers will reduce it to a feature bundle.
 
 **Evaluation structure:**
 
-1. **Microbenchmarks** — Each primitive vs. its standalone equivalent
-   - KV: YCSB workloads A-F vs. Redis, RocksDB, SQLite
+1. **Standard benchmarks** — Each primitive vs. its standalone equivalent,
+   using only community-standard benchmark suites (no custom datasets)
+   - KV: YCSB workloads A-F at varying scales vs. Redis, RocksDB, SQLite
+   - JSON: YCSB workloads A-F (standard data model) vs. MongoDB, SQLite JSON1
    - Vectors: ann-benchmarks protocol (recall@K vs. QPS) vs. FAISS, hnswlib
    - Graph: LDBC Graphalytics (BFS, WCC, PageRank, CDLP, LCC, SSSP) vs. Neo4j
      embedded, SQLite recursive CTEs
    - BM25: BEIR nDCG@10 vs. Tantivy, SQLite FTS5
-   - JSON: document insert/query throughput vs. MongoDB, SQLite JSON1
-   - Events: append throughput, hash-chain verification speed
 
 2. **Macrobenchmarks** — Cross-primitive workflows
    - "Ingest 1M documents, auto-embed, hybrid search" — full write+embed+search
@@ -341,6 +341,8 @@ architecture makes the full plan cheap enough to execute on every query.
   (fixed blend) -> +position-aware blend -> +graph boost -> +strong signal skip
 - Quality-latency Pareto chart
 - ann-benchmarks protocol for vector index (recall@K vs. QPS Pareto curves)
+- GraphRAG-Bench (HuggingFace standard dataset) for graph-augmented retrieval
+  comparison against Microsoft GraphRAG
 
 **Baselines:**
 - BM25 (Lucene/Tantivy)

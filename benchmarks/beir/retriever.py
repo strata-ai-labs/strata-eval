@@ -1,13 +1,20 @@
-"""StrataSearch — BEIR BaseSearch adapter for the Strata search engine."""
+"""StrataSearch — BEIR BaseSearch adapter for the Strata search engine.
+
+All database operations (indexing, search) are executed by piping
+pre-generated commands directly to the ``strata`` CLI binary via
+:func:`batch_execute`.  Python is used only for dataset handling and
+metric computation — there is no Python overhead per database operation
+in the timing loop.
+"""
 
 from __future__ import annotations
 
 import os
+import shlex
 import tempfile
-import time
 
 from beir.retrieval.search import BaseSearch
-from lib.strata_client import StrataClient
+from lib.strata_client import StrataClient, batch_execute
 from tqdm import tqdm
 
 
@@ -19,11 +26,11 @@ class StrataSearch(BaseSearch):
     top_k, returns ``{query_id: {doc_id: score}}``.
     """
 
-    # Maps CLI mode names to client.search() kwargs.
-    _SEARCH_KWARGS = {
-        "keyword": {"mode": "keyword"},
-        "hybrid": {"mode": "hybrid"},
-        "hybrid-llm": {"mode": "hybrid", "expand": True, "rerank": True},
+    # Maps CLI mode names to search command flags.
+    _SEARCH_FLAGS = {
+        "keyword": ["--mode", "keyword"],
+        "hybrid": ["--mode", "hybrid"],
+        "hybrid-llm": ["--mode", "hybrid", "--expand", "--rerank"],
     }
 
     def __init__(self, mode: str = "hybrid", db_path: str | None = None,
@@ -39,31 +46,45 @@ class StrataSearch(BaseSearch):
         self.mode = mode
         self.db_path = db_path
         self.embed_model = embed_model
-        self._client: StrataClient | None = None
+        self._db_dir: str | None = None
         self._tmpdir = None
+        self._setup_done = False
         self.index_time: float = 0.0
         self.search_time: float = 0.0
 
-    def _open_db(self) -> StrataClient:
-        """Lazily open a Strata database via the CLI."""
-        if self._client is None:
-            if self.db_path:
-                os.makedirs(self.db_path, exist_ok=True)
-                db_dir = self.db_path
-            else:
-                self._tmpdir = tempfile.TemporaryDirectory()
-                db_dir = self._tmpdir.name
-            use_embed = self.mode != "keyword"
-            self._client = StrataClient(db_path=db_dir, auto_embed=use_embed)
-            if use_embed:
-                self._client.setup()
-            if self.mode == "hybrid-llm":
-                self._client.configure_model(
-                    endpoint=os.environ["STRATA_MODEL_ENDPOINT"],
-                    model=os.environ["STRATA_MODEL_NAME"],
-                    api_key=os.environ.get("STRATA_MODEL_API_KEY"),
-                )
-        return self._client
+    def _ensure_db_dir(self) -> str:
+        """Create or return the database directory."""
+        if self._db_dir is not None:
+            return self._db_dir
+        if self.db_path:
+            os.makedirs(self.db_path, exist_ok=True)
+            self._db_dir = self.db_path
+        else:
+            self._tmpdir = tempfile.TemporaryDirectory()
+            self._db_dir = self._tmpdir.name
+        return self._db_dir
+
+    def _ensure_setup(self) -> None:
+        """One-time setup: download embedding model, configure LLM endpoint.
+
+        Uses a short-lived StrataClient for interactive setup commands,
+        then closes it so batch_execute can open the same database.
+        """
+        if self._setup_done:
+            return
+        db_dir = self._ensure_db_dir()
+        use_embed = self.mode != "keyword"
+        if use_embed or self.mode == "hybrid-llm":
+            with StrataClient(db_path=db_dir, auto_embed=use_embed) as client:
+                if use_embed:
+                    client.setup()
+                if self.mode == "hybrid-llm":
+                    client.configure_model(
+                        endpoint=os.environ["STRATA_MODEL_ENDPOINT"],
+                        model=os.environ["STRATA_MODEL_NAME"],
+                        api_key=os.environ.get("STRATA_MODEL_API_KEY"),
+                    )
+        self._setup_done = True
 
     # ------------------------------------------------------------------
     # BaseSearch interface
@@ -77,30 +98,67 @@ class StrataSearch(BaseSearch):
         *args,
         **kwargs,
     ) -> dict[str, dict[str, float]]:
-        client = self._open_db()
+        self._ensure_setup()
+        db_dir = self._ensure_db_dir()
+        use_embed = self.mode != "keyword"
 
-        # Index corpus (skip if DB already has data)
-        t0 = time.perf_counter()
-        existing_keys = client.kv.list()
-        if len(existing_keys) >= len(corpus):
-            print(f"Database already contains {len(existing_keys)} docs, skipping indexing")
-        else:
-            for doc_id, doc in tqdm(corpus.items(), desc="Indexing"):
+        # -- Index corpus via CLI batch ------------------------------------
+        # Check if DB already has data (via a short-lived client)
+        needs_index = True
+        with StrataClient(db_path=db_dir, auto_embed=use_embed) as client:
+            existing_keys = client.kv.list()
+            if len(existing_keys) >= len(corpus):
+                print(f"Database already contains {len(existing_keys)} docs, skipping indexing")
+                needs_index = False
+
+        if needs_index:
+            print("Generating index commands...")
+            index_cmds: list[str] = []
+            for doc_id, doc in tqdm(corpus.items(), desc="Preparing"):
                 text = f"{doc.get('title', '')} {doc['text']}".strip()
-                client.kv.put(doc_id, text)
-            client.flush()
-        self.index_time = time.perf_counter() - t0
+                index_cmds.append(
+                    f"kv put {shlex.quote(doc_id)} {shlex.quote(text)}"
+                )
+            index_cmds.append("flush")
 
-        # Run queries sequentially — CLI pipe is single-threaded
-        search_kwargs = self._SEARCH_KWARGS[self.mode]
+            print(f"Indexing {len(corpus)} documents via CLI...")
+            self.index_time, _ = batch_execute(
+                index_cmds,
+                db_path=db_dir,
+                auto_embed=use_embed,
+                parse_responses=False,
+            )
+            print(f"  Index time: {self.index_time:.1f}s")
+        else:
+            self.index_time = 0.0
+
+        # -- Search via CLI batch ------------------------------------------
+        mode_flags = self._SEARCH_FLAGS[self.mode]
+        search_cmds: list[str] = []
+        query_ids: list[str] = []
+
+        for qid, query_text in queries.items():
+            parts = ["search", shlex.quote(query_text), str(top_k)]
+            parts.extend(mode_flags)
+            parts.extend(["--primitives", "kv"])
+            search_cmds.append(" ".join(parts))
+            query_ids.append(qid)
+
+        print(f"Searching {len(queries)} queries via CLI...")
+        self.search_time, responses = batch_execute(
+            search_cmds,
+            db_path=db_dir,
+            auto_embed=use_embed,
+        )
+
+        # -- Parse results -------------------------------------------------
         results: dict[str, dict[str, float]] = {}
+        for qid, hits in zip(query_ids, responses):
+            if isinstance(hits, list):
+                results[qid] = {h["entity"]: h["score"] for h in hits}
+            else:
+                results[qid] = {}
 
-        t1 = time.perf_counter()
-        for qid, query_text in tqdm(queries.items(), desc="Searching"):
-            hits = client.search(query_text, k=top_k, primitives=["kv"], **search_kwargs)
-            results[qid] = {h["entity"]: h["score"] for h in hits}
-
-        self.search_time = time.perf_counter() - t1
         return results
 
     def encode(self, *args, **kwargs):
@@ -111,9 +169,8 @@ class StrataSearch(BaseSearch):
 
     def cleanup(self):
         """Clean up the database. Only removes temp directories, not persistent ones."""
-        if self._client is not None:
-            self._client.close()
-            self._client = None
         if self._tmpdir is not None:
             self._tmpdir.cleanup()
             self._tmpdir = None
+        self._db_dir = None
+        self._setup_done = False

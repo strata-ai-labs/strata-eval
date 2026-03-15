@@ -17,7 +17,7 @@ import tempfile
 from collections import Counter
 
 from rank_bm25 import BM25Okapi
-from stratadb import Strata
+from lib.strata_client import StrataClient
 
 
 # ---------------------------------------------------------------------------
@@ -156,10 +156,10 @@ def main():
     rb = BM25Okapi(tokenized_corpus, k1=1.2, b=0.75)
 
     # -----------------------------------------------------------------------
-    # 3. Strata (actual Rust implementation via Python SDK)
+    # 3. Strata (actual Rust implementation via CLI)
     # -----------------------------------------------------------------------
     tmpdir = tempfile.mkdtemp(prefix="strata_bm25_verify_")
-    db = Strata.open(tmpdir, auto_embed=False)
+    db = StrataClient(db_path=tmpdir)
     for doc_id, text in CORPUS.items():
         db.kv.put(doc_id, text)
     db.flush()
@@ -187,7 +187,7 @@ def main():
             key=lambda x: -x[1],
         )
 
-        # Strata (actual)
+        # Strata (actual via CLI)
         strata_hits = db.search(query, k=10, primitives=["kv"], mode="keyword")
         strata_results = [(h["entity"], h["score"]) for h in strata_hits]
 
@@ -277,7 +277,7 @@ def main():
         print(f"\n  VERDICT: Rankings differ — review the details above.")
     print(f"{'=' * 72}")
 
-    db.flush()
+    db.close()
 
 
 if __name__ == "__main__":

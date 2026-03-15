@@ -315,109 +315,43 @@ python scripts/run_experiment.py config.yaml --compare results/baseline.json
 
 ## Epic 2: Arc A — Architecture Benchmarks
 
-Microbenchmarks for each primitive, cross-primitive macrobenchmarks, resource
-efficiency comparison against the polyglot stack. Includes the killer experiment
-(branched configuration search) that demonstrates the speculative data substrate
-thesis.
+Standard benchmarks (YCSB, BEIR, ann-benchmarks, Graphalytics) at varying scales,
+cross-primitive macrobenchmarks, resource efficiency comparison against the polyglot
+stack. Includes the killer experiment (branched configuration search) that
+demonstrates the speculative data substrate thesis. Only community-standard
+benchmarks for individual primitives — no custom microbenchmarks.
 
-### Story 2.1: Microbenchmark suite — KV
-
-**Complexity:** M
-
-**What:** Benchmark KV operations at varying value sizes and record counts.
-
-**Parameters:**
-- Value sizes: 64B, 1KB, 10KB, 100KB
-- Record counts: 1K, 10K, 100K, 1M
-- Operations: put, get, delete, cas, getv, list
-
-**Metrics:** throughput (ops/s), p50/p95/p99 latency (us)
-
-**Files to create:**
-- `benchmarks/microbench/__init__.py`
-- `benchmarks/microbench/config.py` — value sizes, record counts, operation types
-- `benchmarks/microbench/kv_runner.py` — `KvMicrobenchmark` class
-
-**Pattern:** Follow timing approach from `benchmarks/ycsb/runner.py`
-
-**Dependencies:** 0.1 (cas, getv in client)
-
----
-
-### Story 2.2: Microbenchmark suite — JSON, Event, State
-
-**Complexity:** M
-
-**What:** Microbenchmarks for the remaining primitives.
-
-**JSON benchmarks:**
-- Insert, get, delete, query at varying document sizes (1KB, 10KB, 100KB)
-- Collection sizes: 1K, 10K, 100K documents
-
-**Event benchmarks:**
-- Append throughput (events/sec)
-- List/query latency at varying log sizes
-- Hash-chain verification speed (events are SHA-256 chained)
-
-**State benchmarks:**
-- init, get, cas throughput
-- CAS contention: measure retry rates under concurrent access
-
-**Files to create:**
-- `benchmarks/microbench/json_runner.py`
-- `benchmarks/microbench/event_runner.py`
-- `benchmarks/microbench/state_runner.py`
-
-**Dependencies:** 0.1
-
----
-
-### Story 2.3: Microbenchmark suite — BM25 search
-
-**Complexity:** M
-
-**What:** BM25 indexing throughput and query latency in isolation (no vectors).
-Differs from BEIR: this measures raw performance at different corpus scales
-with synthetic data, not retrieval quality with real queries.
-
-**Parameters:**
-- Corpus sizes: 1K, 10K, 100K, 1M synthetic documents
-- Query sets: 100, 1000 queries
-- Document lengths: 50, 200, 1000 tokens
-
-**Metrics:** indexing throughput (docs/s), query latency (p50/p95/p99), QPS
-
-**Files to create:**
-- `benchmarks/microbench/search_runner.py`
-
-**Dependencies:** None (search already works via existing client)
-
----
-
-### Story 2.4: Unified microbenchmark runner
+### Story 2.1: YCSB parameter sweeps (KV + JSON)
 
 **Complexity:** S
 
-**What:** Orchestrates all microbenchmark sub-runners as a single CLI subcommand.
+**What:** Run standard YCSB workloads against both the KV and JSON primitives at
+varying scales. KV is the existing binding. JSON uses YCSB the same way MongoDB
+papers do — documents as opaque blobs via the standard YCSB data model.
 
-**Usage:**
-```bash
-python run.py microbench                          # all primitives
-python run.py microbench --primitive kv json       # specific primitives
-python run.py microbench --record-count 100000     # override parameters
-```
+**Primitives:**
+- KV (existing binding)
+- JSON (new binding — same YCSB workloads, backed by `json put`/`json get`)
 
-**Files to create:**
-- `benchmarks/microbench/runner.py` — `MicrobenchmarkSuite(BaseBenchmark)`
+**Parameter sweeps:**
+- Value sizes: 64B, 1KB, 10KB, 100KB (existing default: 100B x 10 fields)
+- Record counts: 1K, 10K, 100K, 1M (existing default: 100K)
+- All 6 standard workloads (A-F)
+
+**Baselines for JSON:** MongoDB, SQLite JSON1
 
 **Files to modify:**
-- `benchmarks/__init__.py` — register `microbench`
+- `benchmarks/ycsb/runner.py` — add JSON primitive binding
+- `benchmarks/ycsb/config.py` — add `--primitive kv|json` flag
 
-**Dependencies:** 2.1-2.3
+**Files to create:**
+- `configs/arc_a/ycsb_sweep.yaml` — parameter grid for both primitives
+
+**Dependencies:** 0.1 (JSON namespace in client)
 
 ---
 
-### Story 2.5: Cross-primitive macrobenchmarks
+### Story 2.2: Cross-primitive macrobenchmarks
 
 **Complexity:** L
 
@@ -444,7 +378,7 @@ python run.py microbench --record-count 100000     # override parameters
 
 ---
 
-### Story 2.6: Baseline runners — Redis and SQLite
+### Story 2.3: Baseline runners — Redis and SQLite
 
 **Complexity:** L
 
@@ -477,11 +411,11 @@ class BaselineRunner(ABC):
 - `benchmarks/__init__.py` — register `polyglot`
 - `requirements.txt` — add `redis>=5.0` (optional)
 
-**Dependencies:** 2.4 (microbenchmark workloads to compare against)
+**Dependencies:** None (runs standard benchmarks against external systems)
 
 ---
 
-### Story 2.7: Resource efficiency — Strata vs polyglot stack
+### Story 2.4: Resource efficiency — Strata vs polyglot stack
 
 **Complexity:** L
 
@@ -499,11 +433,11 @@ Strata               1.8        2.1          3,400
 **Files to create:**
 - `benchmarks/polyglot/resource_comparison.py`
 
-**Dependencies:** 1.6 (profiler), 2.6 (baseline runners)
+**Dependencies:** 1.6 (profiler), 2.3 (baseline runners)
 
 ---
 
-### Story 2.8: Branched configuration search (killer experiment)
+### Story 2.5: Branched configuration search (killer experiment)
 
 **Complexity:** L
 
@@ -536,23 +470,18 @@ hours and significant orchestration code.
 **Files to modify:**
 - `benchmarks/__init__.py` — register `branching`
 
-**Dependencies:** 0.1 (branch commands in client), 2.6 (polyglot baselines)
+**Dependencies:** 0.1 (branch commands in client), 2.3 (polyglot baselines)
 
 ---
 
-### Story 2.9: Arc A experiment configs
+### Story 2.6: Arc A experiment configs
 
 **Complexity:** S
 
 **What:** YAML configs for all Arc A experiments.
 
 **Files to create:**
-- `configs/arc_a/kv_microbench.yaml`
-- `configs/arc_a/json_microbench.yaml`
-- `configs/arc_a/event_microbench.yaml`
-- `configs/arc_a/vector_microbench.yaml`
-- `configs/arc_a/graph_microbench.yaml`
-- `configs/arc_a/search_microbench.yaml`
+- `configs/arc_a/ycsb_sweep.yaml`
 - `configs/arc_a/cross_primitive.yaml`
 - `configs/arc_a/resource_efficiency.yaml`
 - `configs/arc_a/branched_config_search.yaml`
@@ -646,11 +575,41 @@ comparison in the results table.
 - `benchmarks/beir/baselines/elasticsearch_elser.py`
 - `benchmarks/beir/baselines/colbert_baseline.py`
 
-**Dependencies:** 2.6 (Docker baseline infrastructure)
+**Dependencies:** 2.3 (Docker baseline infrastructure)
 
 ---
 
-### Story 3.4: Arc B experiment configs
+### Story 3.4: GraphRAG evaluation
+
+**Complexity:** M
+
+**What:** Complete the existing `benchmarks/graphrag_bench/` scaffold. This is a
+direct evaluation of Arc B's graph-augmented retrieval sub-contribution against
+Microsoft's GraphRAG as a baseline. Uses the standard HuggingFace GraphRAG-Bench
+dataset.
+
+**Existing scaffold has:** CLI args, download source, validation, pipeline
+structure documented. All pipeline steps raise `NotImplementedError`.
+
+**Remaining work:**
+1. Load domain documents from GraphRAG-Bench dataset
+2. Extract triples via LLM and store in Strata's graph primitive
+3. Graph-based retrieval (multi-hop via `client.graph.bfs()` / `neighbors()`)
+4. Generate answers using LLM + retrieved graph context
+5. Evaluate: exact match, lexical overlap, reasoning quality
+
+**Key comparison:** Strata's native graph-augmented retrieval (graph + BM25 +
+vectors in one address space) vs. Microsoft GraphRAG (external knowledge graph
+construction + separate retrieval pipeline).
+
+**Files to modify:**
+- `benchmarks/graphrag_bench/runner.py` — implement pipeline steps
+
+**Dependencies:** 0.1 (graph + inference namespaces in client)
+
+---
+
+### Story 3.5: Arc B experiment configs
 
 **Complexity:** S
 
@@ -659,6 +618,7 @@ comparison in the results table.
 - `configs/arc_b/ablation_full_beir.yaml`
 - `configs/arc_b/pareto_sweep.yaml`
 - `configs/arc_b/baselines_comparison.yaml`
+- `configs/arc_b/graphrag.yaml`
 
 **Dependencies:** 1.1
 
@@ -789,16 +749,13 @@ of what the benchmark will measure when implemented.
 
 **Stubs to create:**
 
-| Arc / Sub-contribution | Directory | What it will benchmark |
-|------------------------|-----------|----------------------|
-| B: Segmented HNSW | `benchmarks/ann/pareto.py` (extend existing) | ef_search sweep, recall vs QPS Pareto curves, build time at 1M-10M scale |
-| B: Graph-Augmented Retrieval | `benchmarks/graph_retrieval/` | BEIR + knowledge graph, ablation of graph signals, structural vs statistical retrieval |
-| D: Recursive Queries | `benchmarks/recursive_query/` | Multi-hop QA (HotpotQA, MuSiQue), RLM-over-Strata vs RLM-over-text, branch-scoped exploration |
-| D: Agent-First Design | `benchmarks/agent_bench/` | Agent task completion rate, API calls per task, error recovery rate, with/without describe() and rich errors |
-| A: Event Projections | `benchmarks/event_projection/` | Projection throughput (events/sec with varying action counts), materialization consistency, replay performance |
-| D: Graph-Validated State Machines | `benchmarks/state_machine/` | FSM validation overhead per state write, agent self-correction rate with/without actionable errors |
-| A: Auto-Embedding | `benchmarks/auto_embed/` | Write amplification, embedding throughput, query freshness (time from write to searchable), model size vs quality tradeoff |
-| A: COW Branching | `benchmarks/cow_branching/` | Branch creation overhead at varying DB sizes, write amplification on branches, merge performance |
+| Arc / Sub-contribution | Directory | Standard benchmark basis |
+|------------------------|-----------|------------------------|
+| B: Segmented HNSW | `benchmarks/ann/pareto.py` (extend existing) | ann-benchmarks protocol: ef_search sweep, recall vs QPS Pareto curves at 1M-10M scale |
+| B: Graph-Augmented Retrieval | `benchmarks/graph_retrieval/` | BEIR + knowledge graph, ablation of graph signals on standard BEIR datasets |
+| D: Recursive Queries | `benchmarks/recursive_query/` | HotpotQA, MuSiQue (standard multi-hop QA), RLM-over-Strata vs RLM-over-text |
+| D: Agent-First Design | `benchmarks/agent_bench/` | Agent task completion rate, API calls per task, error recovery rate |
+| D: Graph-Validated State Machines | `benchmarks/state_machine/` | Agent success rate on stateful tasks with/without FSM validation |
 
 **Each stub directory contains:**
 - `__init__.py`
@@ -823,10 +780,7 @@ of what the benchmark will measure when implemented.
 - `configs/arc_b/graph_retrieval.yaml`
 - `configs/arc_d/recursive_query.yaml`
 - `configs/arc_d/agent_tasks.yaml`
-- `configs/arc_a/event_projection.yaml`
 - `configs/arc_d/state_machine.yaml`
-- `configs/arc_a/auto_embed.yaml`
-- `configs/arc_a/cow_branching.yaml`
 
 **Dependencies:** 1.1
 
@@ -856,25 +810,25 @@ Story 1.2 ───────────────────────�
 Story 1.7 — Experiment runner script (ties 1.1-1.6 together)
 ```
 
-### Phase 2: Arc A — Architecture Benchmarks (5-6 commits)
+### Phase 2: Arc A — Architecture Benchmarks (4-5 commits)
 
 ```
-Stories 2.1-2.3 — Microbenchmarks (KV, JSON, Event, State, BM25)
-Story 2.4 — Unified microbenchmark suite
-Story 2.5 — Cross-primitive macrobenchmarks
-Story 2.6 — Baseline runners (Redis, SQLite)
-Story 2.7 — Resource efficiency comparison
-Story 2.8 — Branched configuration search (killer experiment)
-Story 2.9 — Arc A configs
+Story 2.1 — YCSB parameter sweeps (standard benchmark, varying scales)
+Story 2.2 — Cross-primitive macrobenchmarks
+Story 2.3 — Baseline runners (Redis, SQLite)
+Story 2.4 — Resource efficiency comparison
+Story 2.5 — Branched configuration search (killer experiment)
+Story 2.6 — Arc A configs
 ```
 
-### Phase 3: Arc B — Retrieval Benchmarks (3-4 commits)
+### Phase 3: Arc B — Retrieval Benchmarks (4-5 commits)
 
 ```
 Story 3.1 — BEIR ablation support
 Story 3.2 — Pareto analysis
 Story 3.3 — External baselines (Elasticsearch ELSER, ColBERT)
-Story 3.4 — Arc B configs
+Story 3.4 — GraphRAG evaluation
+Story 3.5 — Arc B configs
 ```
 
 ### Phase 4: Arc C + Arc D Scaffolds and All Stubs (2-3 commits)
@@ -884,7 +838,7 @@ Stories 4.1-4.5 — Inference scaffold + RAGAS completion + datasets + configs
 Stories 5.1-5.2 — Arc D stubs + remaining sub-contribution stubs and configs
 ```
 
-**Total: ~26 stories across 6 epics, approximately 16-20 commits.**
+**Total: 26 stories across 6 epics, approximately 15-19 commits.**
 
 ---
 
@@ -901,7 +855,7 @@ Stories 5.1-5.2 — Arc D stubs + remaining sub-contribution stubs and configs
 - Existing commands (`python run.py beir --dataset nfcorpus`) still work unchanged
 
 ### After Phase 2 (Arc A):
-- `python run.py microbench --primitive kv --record-count 10000` runs KV microbenchmarks
+- `python run.py ycsb --workload a --record-count 1000000` runs YCSB at 1M scale
 - `python run.py macrobench` runs cross-primitive workflows
 - `python run.py polyglot --baseline redis sqlite` runs baseline comparisons
 - `python run.py branching` runs the branched configuration search experiment
