@@ -44,7 +44,7 @@ class BeirBenchmark(BaseBenchmark):
             help=f"Cutoff depths for evaluation (default: {K_VALUES})",
         )
         parser.add_argument(
-            "--data-dir", type=str, default=str(ROOT / "datasets"),
+            "--data-dir", type=str, default=str(ROOT / "datasets" / "beir"),
             help="Directory for downloaded BEIR datasets",
         )
         parser.add_argument(
@@ -68,7 +68,7 @@ class BeirBenchmark(BaseBenchmark):
     def download(self, args: argparse.Namespace) -> None:
         raw = getattr(args, "dataset", None) or []
         datasets = raw if isinstance(raw, list) else [raw]
-        data_dir = Path(getattr(args, "data_dir", str(ROOT / "datasets")))
+        data_dir = Path(getattr(args, "data_dir", str(ROOT / "datasets" / "beir")))
         for name in datasets:
             if name not in DATASETS:
                 print(f"Unknown BEIR dataset: {name}")

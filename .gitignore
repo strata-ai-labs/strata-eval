@@ -1,4 +1,3 @@
-datasets/
 results/
 __pycache__/
 *.pyc
@@ -15,6 +14,7 @@ build/
 .pytest_cache/
 *.hdf5
 *.log
+*.zip
 .DS_Store
 .db_cache/
 scratch/
